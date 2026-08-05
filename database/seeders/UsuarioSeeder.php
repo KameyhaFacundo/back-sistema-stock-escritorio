@@ -26,7 +26,7 @@ class UsuarioSeeder extends Seeder
             ]
         );
 
-        User::firstOrCreate(
+        $admin = User::firstOrCreate(
             ['email' => 'admin@admin.com'],
             [
                 'des_usu'         => 'Administrador',
@@ -36,5 +36,14 @@ class UsuarioSeeder extends Seeder
                 'empresa_id'      => $empresa->id,
             ]
         );
+
+        // El rol NO otorga permisos por sí solo (ver User::chequearPermisos) —
+        // lo que decide el acceso real son los permisos directos del usuario.
+        // AuthController::register ya hace este mismo sync al crear un admin
+        // por el registro público; acá hacía falta lo mismo para que el admin
+        // sembrado no quede sin ningún permiso directo.
+        if ($rolAdmin) {
+            $admin->permisos()->sync($rolAdmin->permisos->pluck('id'));
+        }
     }
 }
