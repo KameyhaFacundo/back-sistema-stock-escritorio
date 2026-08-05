@@ -20,16 +20,18 @@ use App\Http\Controllers\RolesController;
 use App\Http\Controllers\SucursalesController;
 use App\Http\Controllers\UsersController;
 use App\Http\Controllers\VentasController;
-use App\Http\Controllers\EscanearController;
+// IA (Gemini) desactivada por ahora — descomentar junto con las rutas de
+// más abajo si se vuelve a activar (ver EscanearController/IaController/AsistenteController).
+// use App\Http\Controllers\EscanearController;
 use App\Http\Controllers\FacturaController;
-use App\Http\Controllers\IaController;
+// use App\Http\Controllers\IaController;
 use App\Http\Controllers\MovimientosController;
 use App\Http\Controllers\CarritoVaciadoController;
 use App\Http\Controllers\PagoPointController;
 use App\Http\Controllers\TwoFactorController;
 use App\Http\Controllers\LotesController;
 use App\Http\Controllers\CatalogoController;
-use App\Http\Controllers\AsistenteController;
+// use App\Http\Controllers\AsistenteController;
 use App\Http\Controllers\GruposTallesController;
 use App\Http\Controllers\TallesController;
 use Illuminate\Support\Facades\Route;
@@ -95,13 +97,11 @@ $apiRoutes = function () {
 
         Route::get('dashboard/stats', [DashboardController::class, 'stats'])->middleware('permisos.verify:view-dashboard');
 
-        // IA / sugerencias
-        Route::post('ia/sugerencias', [IaController::class, 'sugerencias']);
-
-        // Asistente de IA interno (autenticado) — preguntas de uso del sistema
-        // y sobre los datos reales de la empresa (ventas, stock, etc.)
-        Route::post('asistente/preguntar', [AsistenteController::class, 'preguntar'])
-            ->middleware(config('rate_limiting.api.asistente_sistema'));
+        // IA desactivada por ahora (ver nota en los imports, arriba) — descomentar
+        // para reactivar sugerencias de precio/categoría y el asistente de IA.
+        // Route::post('ia/sugerencias', [IaController::class, 'sugerencias']);
+        // Route::post('asistente/preguntar', [AsistenteController::class, 'preguntar'])
+        //     ->middleware(config('rate_limiting.api.asistente_sistema'));
 
         Route::prefix('users')->group(function () {
                 Route::get('/',              [UsersController::class, 'index'])   ->middleware('permisos.verify:list-usuarios');
@@ -166,10 +166,12 @@ $apiRoutes = function () {
                 Route::put('{id}',                       [ProductosController::class, 'update'])             ->middleware('permisos.verify:update-productos');
                 Route::delete('{id}',                    [ProductosController::class, 'destroy'])            ->middleware('permisos.verify:delete-productos');
                 Route::get('{id}/historial-precios',     [ProductosController::class, 'historialPrecios'])   ->middleware('permisos.verify:view-productos');
+                Route::get('{id}/historial-compras',     [ProductosController::class, 'historialCompras'])   ->middleware('permisos.verify:view-productos');
                 Route::post('{id}/imagen',               [ProductosController::class, 'subirImagen'])        ->middleware('permisos.verify:update-productos');
                 Route::delete('{id}/imagen',              [ProductosController::class, 'eliminarImagen'])     ->middleware('permisos.verify:update-productos');
-                Route::post('{id}/imagen-ia',             [ProductosController::class, 'generarImagenIa'])    ->middleware('permisos.verify:update-productos');
-                Route::post('{id}/imagen-combo-ia',       [ProductosController::class, 'generarImagenComboIa'])->middleware('permisos.verify:update-productos');
+                // IA desactivada por ahora (ver nota junto a los imports) — descomentar para reactivar.
+                // Route::post('{id}/imagen-ia',             [ProductosController::class, 'generarImagenIa'])    ->middleware('permisos.verify:update-productos');
+                // Route::post('{id}/imagen-combo-ia',       [ProductosController::class, 'generarImagenComboIa'])->middleware('permisos.verify:update-productos');
             });
 
             Route::prefix('proveedores')->group(function () {
@@ -201,7 +203,8 @@ $apiRoutes = function () {
                 // devolver-ventas: un cajero puede devolver mercadería sin
                 // poder cambiar el estado completo de una compra.
                 Route::post('{id}/devolucion',      [ComprasController::class, 'devolucion'])    ->middleware('permisos.verify:devolver-compras');
-                Route::post('escanear',             [EscanearController::class, 'factura'])      ->middleware('permisos.verify:create-compras');
+                // IA desactivada por ahora (ver nota junto a los imports) — descomentar para reactivar.
+                // Route::post('escanear',             [EscanearController::class, 'factura'])      ->middleware('permisos.verify:create-compras');
             });
 
             Route::prefix('deudas-clientes')->group(function () {

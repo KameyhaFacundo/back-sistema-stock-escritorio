@@ -131,4 +131,45 @@ class ArcaServiceTest extends TestCase
         $this->expectException(\Exception::class);
         $firmarCms->invoke($arca, $tra);
     }
+
+    /**
+     * Empresa "configurada" (cuit + cert + key + punto de venta presentes,
+     * así que disponible() = true) pero con un cert/key que no sirve para
+     * firmar de verdad — esto hace fallar firmarCMS() ANTES de que
+     * obtenerTicketAccesoRaw() llegue a intentar ninguna llamada de red, así
+     * que sirve para probar el camino de excepción sin depender de internet
+     * ni de ARCA de verdad (mismo criterio que el resto de este archivo).
+     */
+    private function empresaConfiguradaConCertInvalido(): Empresa
+    {
+        return new Empresa([
+            'cuit'              => '20304050607',
+            'arca_cert'         => 'no-es-un-certificado',
+            'arca_key'          => 'no-es-una-clave',
+            'arca_punto_venta'  => 1,
+            'arca_homologacion' => true,
+        ]);
+    }
+
+    public function test_emitir_factura_real_propaga_la_excepcion_en_vez_de_caer_a_modo_prueba(): void
+    {
+        $arca = new ArcaService($this->empresaConfiguradaConCertInvalido());
+
+        $this->expectException(\Exception::class);
+        $arca->emitirFacturaReal(['punto_venta' => 1, 'tipo_comprobante' => ArcaService::TIPO_FACTURA_B, 'total' => 100, 'items' => []]);
+    }
+
+    public function test_emitir_factura_sigue_cayendo_a_modo_prueba_ante_una_falla_real(): void
+    {
+        // emitirFactura() (a diferencia de emitirFacturaReal()) es el camino
+        // síncrono que todavía usa el controller para empresas SIN ARCA
+        // configurado — tiene que seguir sin explotar nunca.
+        $arca = new ArcaService($this->empresaConfiguradaConCertInvalido());
+
+        $resultado = $arca->emitirFactura(['punto_venta' => 1, 'total' => 100, 'items' => [], 'ultimo_numero' => 3]);
+
+        $this->assertTrue($resultado['success']);
+        $this->assertTrue($resultado['modo_prueba']);
+        $this->assertEquals('99999999999999', $resultado['cae']);
+    }
 }

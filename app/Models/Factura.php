@@ -18,6 +18,11 @@ class Factura extends Model
     // falta pedirlo aparte.
     protected $appends = ['numero_completo', 'qr_url'];
 
+    // items es solo el detalle que EmitirFacturaJob necesita para terminar
+    // de emitir una factura pendiente — dato interno de ARCA, no algo que
+    // el front tenga que ver (la venta ya tiene sus propias líneas).
+    protected $hidden = ['items'];
+
     protected $fillable = [
         'empresa_id',
         'id_venta',
@@ -37,6 +42,12 @@ class Factura extends Model
         'numero_documento',
         'cliente_nombre',
         'estado',
+        'error_mensaje',
+        'items',
+    ];
+
+    protected $casts = [
+        'items' => 'array',
     ];
 
     public function venta()
@@ -83,8 +94,14 @@ class Factura extends Model
         return $this->belongsTo(DevolucionVenta::class, 'id_devolucion_venta');
     }
 
-    public function getNumeroCompletoAttribute(): string
+    public function getNumeroCompletoAttribute(): ?string
     {
+        // Una factura pendiente (ver EmitirFacturaJob) todavía no tiene
+        // número real — ARCA es quien lo asigna, recién al resolverse.
+        if ($this->numero === null) {
+            return null;
+        }
+
         // AFIP/ARCA siempre exige el punto de venta con 5 dígitos (no 4) en
         // cualquier formato visible de comprobante.
         return str_pad($this->punto_venta, 5, '0', STR_PAD_LEFT) . '-'

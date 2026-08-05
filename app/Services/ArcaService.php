@@ -100,24 +100,35 @@ class ArcaService
         }
 
         try {
-            $ticket = $this->obtenerTicketAcceso();
-            if (!$ticket) {
-                return $this->facturaPrueba($datos);
-            }
-
-            $ultimoNumero = $this->consultarUltimoComprobante(
-                $ticket['token'],
-                $ticket['sign'],
-                $datos['punto_venta'],
-                $datos['tipo_comprobante'] ?? self::TIPO_FACTURA_B
-            );
-
-            return $this->solicitarCAE($ticket['token'], $ticket['sign'], $datos, $ultimoNumero + 1);
+            return $this->emitirFacturaReal($datos);
         } catch (\Exception $e) {
             Log::error('ARCA emitirFactura error: ' . $e->getMessage());
             $this->reportarError($e);
             return $this->facturaPrueba($datos);
         }
+    }
+
+    /**
+     * Como emitirFactura(), pero para el flujo encolado (EmitirFacturaJob):
+     * asume que ya se sabe que la empresa tiene ARCA configurado (el
+     * llamador ya chequeó arcaConfigurada() antes de encolar), y a
+     * diferencia de emitirFactura() NO amortigua un fallo de red cayendo a
+     * modo prueba — deja la excepción subir para que el Job decida
+     * (reintentar según backoff, o marcar la factura en estado=error si es
+     * un rechazo de negocio, que llega como respuesta normal, no excepción).
+     */
+    public function emitirFacturaReal(array $datos): array
+    {
+        $ticket = $this->obtenerTicketAccesoRaw();
+
+        $ultimoNumero = $this->consultarUltimoComprobanteRaw(
+            $ticket['token'],
+            $ticket['sign'],
+            $datos['punto_venta'],
+            $datos['tipo_comprobante'] ?? self::TIPO_FACTURA_B
+        );
+
+        return $this->solicitarCAE($ticket['token'], $ticket['sign'], $datos, $ultimoNumero + 1);
     }
 
     /**
@@ -127,26 +138,33 @@ class ArcaService
         string $token, string $sign, int $puntoVenta, int $tipoComprobante
     ): int {
         try {
-            return $this->conReintento(function () use ($token, $sign, $puntoVenta, $tipoComprobante) {
-                $client = new \SoapClient($this->wsfeWsdl(), [
-                    'trace' => 1,
-                    'exceptions' => true,
-                    'soap_version' => SOAP_1_2,
-                ]);
-
-                $response = $client->FECompUltimoAutorizado([
-                    'Auth' => ['Token' => $token, 'Sign' => $sign, 'Cuit' => $this->cuit],
-                    'PtoVta' => $puntoVenta,
-                    'CbteTipo' => $tipoComprobante,
-                ]);
-
-                return (int) ($response->FECompUltimoAutorizadoResult->CbteNro ?? 0);
-            });
+            return $this->consultarUltimoComprobanteRaw($token, $sign, $puntoVenta, $tipoComprobante);
         } catch (\Exception $e) {
             Log::warning('ARCA consultarUltimoComprobante error: ' . $e->getMessage());
             $this->reportarError($e);
             return 0;
         }
+    }
+
+    private function consultarUltimoComprobanteRaw(
+        string $token, string $sign, int $puntoVenta, int $tipoComprobante
+    ): int {
+        return $this->conReintento(function () use ($token, $sign, $puntoVenta, $tipoComprobante) {
+            $client = new \SoapClient($this->wsfeWsdl(), [
+                'trace' => 1,
+                'exceptions' => true,
+                'soap_version' => SOAP_1_2,
+                'connection_timeout' => 15,
+            ]);
+
+            $response = $client->FECompUltimoAutorizado([
+                'Auth' => ['Token' => $token, 'Sign' => $sign, 'Cuit' => $this->cuit],
+                'PtoVta' => $puntoVenta,
+                'CbteTipo' => $tipoComprobante,
+            ]);
+
+            return (int) ($response->FECompUltimoAutorizadoResult->CbteNro ?? 0);
+        });
     }
 
     /**
@@ -211,6 +229,7 @@ class ArcaService
                 'trace' => 1,
                 'exceptions' => true,
                 'soap_version' => SOAP_1_2,
+                'connection_timeout' => 15,
             ]);
 
             return $client->FECAESolicitar([
@@ -258,48 +277,58 @@ class ArcaService
      */
     private function obtenerTicketAcceso(): ?array
     {
+        try {
+            return $this->obtenerTicketAccesoRaw();
+        } catch (\Exception $e) {
+            Log::error('ARCA obtenerTicketAcceso error: ' . $e->getMessage());
+            $this->reportarError($e);
+            return null;
+        }
+    }
+
+    private function obtenerTicketAccesoRaw(): array
+    {
         $cacheKey = 'arca_ta:' . $this->cuit . ':' . ($this->modoHomologacion ? 'homo' : 'prod');
         $cacheado = Cache::get($cacheKey);
         if ($cacheado) {
             return $cacheado;
         }
 
-        try {
-            // Generar TRA (Ticket de Requerimiento de Acceso)
-            $tra = $this->generarTRA();
+        // Generar TRA (Ticket de Requerimiento de Acceso)
+        $tra = $this->generarTRA();
 
-            // Firmar TRA con el certificado
-            $cms = $this->firmarCMS($tra);
+        // Firmar TRA con el certificado
+        $cms = $this->firmarCMS($tra);
 
-            // Solicitar token a WSAA
-            $response = $this->conReintento(function () use ($cms) {
-                $client = new \SoapClient($this->wsaaWsdl(), [
-                    'trace' => 1,
-                    'exceptions' => true,
-                    'soap_version' => SOAP_1_2,
-                ]);
+        // Solicitar token a WSAA
+        $response = $this->conReintento(function () use ($cms) {
+            $client = new \SoapClient($this->wsaaWsdl(), [
+                'trace' => 1,
+                'exceptions' => true,
+                'soap_version' => SOAP_1_2,
+                'connection_timeout' => 15,
+            ]);
 
-                return $client->loginCms(['in0' => $cms]);
-            });
-            $xml = simplexml_load_string($response->loginCmsReturn);
+            return $client->loginCms(['in0' => $cms]);
+        });
+        $xml = simplexml_load_string($response->loginCmsReturn);
 
-            if (!$xml) return null;
-
-            $token = (string) ($xml->credentials->token ?? '');
-            $sign  = (string) ($xml->credentials->sign ?? '');
-
-            if (!$token || !$sign) return null;
-
-            $ticket = ['token' => $token, 'sign' => $sign];
-            // Margen conservador por debajo de las ~12hs reales de validez.
-            Cache::put($cacheKey, $ticket, now()->addHours(11));
-
-            return $ticket;
-        } catch (\Exception $e) {
-            Log::error('ARCA obtenerTicketAcceso error: ' . $e->getMessage());
-            $this->reportarError($e);
-            return null;
+        if (!$xml) {
+            throw new \RuntimeException('WSAA no devolvió una respuesta XML válida');
         }
+
+        $token = (string) ($xml->credentials->token ?? '');
+        $sign  = (string) ($xml->credentials->sign ?? '');
+
+        if (!$token || !$sign) {
+            throw new \RuntimeException('WSAA no devolvió token/sign');
+        }
+
+        $ticket = ['token' => $token, 'sign' => $sign];
+        // Margen conservador por debajo de las ~12hs reales de validez.
+        Cache::put($cacheKey, $ticket, now()->addHours(11));
+
+        return $ticket;
     }
 
     private function generarTRA(): string

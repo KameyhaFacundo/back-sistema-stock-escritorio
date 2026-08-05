@@ -7,6 +7,7 @@ use App\Http\Requests\CreateProductoRequest;
 use App\Http\Requests\UpdateProductoRequest;
 use App\Models\ComboComponente;
 use App\Models\HistorialPrecio;
+use App\Models\LineaCompra;
 use App\Models\Producto;
 use App\Models\ProductoStock;
 use App\Services\GeminiService;
@@ -101,7 +102,8 @@ class ProductosController extends Controller
                 // Una variante ya se ve anidada bajo su padre (arriba) — no debe
                 // aparecer también como su propia fila suelta en el listado.
                 ->whereNull('id_producto_padre')
-                ->withSum('stocks', 'stock');
+                ->withSum('stocks', 'stock')
+                ->withMax('historialPrecios as ultima_modificacion_precio', 'created_at');
 
             if ($request->has('search') && $request->search) {
                 $search = $request->search;
@@ -506,6 +508,30 @@ class ProductosController extends Controller
         return response()->json([
             'success' => true,
             'data'    => $historial,
+        ]);
+    }
+
+    /**
+     * A qué proveedores se le compró este producto y a qué precio cada vez —
+     * lineas_compras ya guarda el precio_compra por línea (nunca se pisa
+     * uno con otro), así que alcanza con traerlas con su compra/proveedor.
+     * Solo compras confirmadas: una anulada o pendiente no refleja un costo
+     * real pagado.
+     */
+    public function historialCompras($id): JsonResponse
+    {
+        Producto::findOrFail($id);
+
+        $lineas = LineaCompra::with(['compra.proveedor:id,persona'])
+            ->where('id_producto', $id)
+            ->whereHas('compra', fn($q) => $q->where('estado', 'confirmada'))
+            ->get()
+            ->sortByDesc(fn($linea) => $linea->compra->fecha)
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'data'    => $lineas,
         ]);
     }
 

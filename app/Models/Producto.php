@@ -70,6 +70,11 @@ class Producto extends Model
         return $this->hasMany(LineaVenta::class, 'id_producto', 'id');
     }
 
+    public function historialPrecios()
+    {
+        return $this->hasMany(HistorialPrecio::class, 'id_producto', 'id');
+    }
+
     // Los productos que componen este combo (vacío si no es un combo).
     public function componentes()
     {
