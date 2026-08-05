@@ -33,18 +33,6 @@ class AuthTest extends TestCase
     }
 
     /**
-     * Registro con datos inválidos debe fallar.
-     */
-    public function test_register_requires_valid_data(): void
-    {
-        $response = $this->postJson('/api/v1/register', [
-            'email' => 'not-an-email',
-        ]);
-
-        $response->assertStatus(422);
-    }
-
-    /**
      * Endpoint público accesible sin token.
      */
     public function test_public_endpoints_are_accessible(): void

@@ -55,7 +55,6 @@ $apiRoutes = function () {
             ->middleware(config('rate_limiting.api.login'));
         Route::post('login/2fa', [AuthController::class, 'loginVerificar2fa'])
             ->middleware(config('rate_limiting.api.login_2fa'));
-        Route::post('register', [AuthController::class, 'register']);
         Route::post('forgot-password', [AuthController::class, 'forgotPassword'])
             ->middleware(config('rate_limiting.api.forgot_password'));
         Route::post('reset-password', [AuthController::class, 'resetPassword'])
