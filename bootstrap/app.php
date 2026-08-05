@@ -15,6 +15,21 @@ $app = new Illuminate\Foundation\Application(
     $_ENV['APP_BASE_PATH'] ?? dirname(__DIR__)
 );
 
+// En la app de escritorio, el código (este directorio) se reinstala en cada
+// actualización, pero storage/ y .env tienen que sobrevivir esa reinstalación
+// (ahí vive la base SQLite real del comercio) — el launcher de Electron los
+// redirige a una carpeta persistente vía estas dos env vars. Sin ellas, se
+// comporta exactamente igual que un Laravel estándar (dev local, etc.).
+// getenv() en vez de $_ENV: variables_order del CLI de PHP no siempre incluye
+// "E", así que una env var seteada por el proceso padre (Electron) puede no
+// aparecer en $_ENV aunque sí esté seteada — getenv() no depende de esa ini.
+if ($storagePath = getenv('APP_STORAGE_PATH')) {
+    $app->useStoragePath($storagePath);
+}
+if ($envPath = getenv('APP_ENV_PATH')) {
+    $app->useEnvironmentPath($envPath);
+}
+
 /*
 |--------------------------------------------------------------------------
 | Bind Important Interfaces

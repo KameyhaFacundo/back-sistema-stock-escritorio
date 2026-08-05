@@ -13,7 +13,16 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-// API pura sin frontend propio (lo sirve front-sistema-stock aparte) — nunca
-// hubo una vista 'welcome' acá, así que '/' devolvía 500 en vez de una
-// respuesta útil.
-Route::get('/', fn () => response()->json(['ok' => true, 'app' => config('app.name')]));
+// API pura sin frontend propio en el modelo SaaS original (lo servía
+// front-sistema-stock aparte) — pero en la app de escritorio el build de
+// React se copia dentro de public/ (ver escritorio-launcher/scripts/build-resources)
+// y este mismo backend lo sirve desde el mismo origen. Si ese build está
+// presente, cualquier GET que no matchee /api/* devuelve su index.html
+// (fallback estándar de SPA); si no está (dev del backend solo, sin el
+// front empaquetado), se mantiene la respuesta JSON de antes.
+if (file_exists(public_path('index.html'))) {
+    Route::get('/{any}', fn () => response()->file(public_path('index.html')))
+        ->where('any', '^(?!api).*$');
+} else {
+    Route::get('/', fn () => response()->json(['ok' => true, 'app' => config('app.name')]));
+}
