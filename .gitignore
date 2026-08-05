@@ -11,6 +11,7 @@
 /storage/logs/*.log
 /storage/app/backups/*
 /vendor
+/database/*.sqlite
 .env
 .env.backup
 .env.production

@@ -22,10 +22,16 @@ return new class extends Migration
             $table->foreign('empresa_id')->references('id')->on('empresas')->nullOnDelete();
         });
 
+        // Subquery correlacionada en vez de UPDATE...INNER JOIN (sintaxis
+        // MySQL-only) — esta forma es estándar y corre igual en MySQL y SQLite.
         DB::statement('
             UPDATE movimientos_caja
-            INNER JOIN turnos ON turnos.id = movimientos_caja.id_turno
-            SET movimientos_caja.empresa_id = turnos.empresa_id
+            SET empresa_id = (
+                SELECT turnos.empresa_id FROM turnos WHERE turnos.id = movimientos_caja.id_turno
+            )
+            WHERE EXISTS (
+                SELECT 1 FROM turnos WHERE turnos.id = movimientos_caja.id_turno
+            )
         ');
     }
 

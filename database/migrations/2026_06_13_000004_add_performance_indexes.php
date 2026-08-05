@@ -11,10 +11,21 @@ return new class extends Migration
     // deploy anterior sin que la tabla `migrations` registrara esta corrida
     // (build automático de Railway reintentado) — el CREATE fallaba con
     // "Duplicate key name". Se agrega solo el que todavía no exista.
+    private function indexExiste(string $table, string $indexName): bool
+    {
+        if (DB::getDriverName() === 'sqlite') {
+            foreach (DB::select("PRAGMA index_list(\"{$table}\")") as $row) {
+                if ($row->name === $indexName) return true;
+            }
+            return false;
+        }
+
+        return !empty(DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]));
+    }
+
     private function addIndexIfMissing(string $table, string|array $columns, string $indexName): void
     {
-        $exists = DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]);
-        if (!empty($exists)) return;
+        if ($this->indexExiste($table, $indexName)) return;
 
         Schema::table($table, function (Blueprint $t) use ($columns, $indexName) {
             $t->index($columns, $indexName);
@@ -23,8 +34,7 @@ return new class extends Migration
 
     private function dropIndexIfExists(string $table, string $indexName): void
     {
-        $exists = DB::select("SHOW INDEX FROM `{$table}` WHERE Key_name = ?", [$indexName]);
-        if (empty($exists)) return;
+        if (!$this->indexExiste($table, $indexName)) return;
 
         Schema::table($table, function (Blueprint $t) use ($indexName) {
             $t->dropIndex($indexName);

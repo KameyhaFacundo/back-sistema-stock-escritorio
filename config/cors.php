@@ -18,9 +18,6 @@ return [
 
     'allowed_origins_patterns' => [
         '/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/',
-        '/\.vercel\.app$/',
-        '/\.netlify\.app$/',
-        '/\.up\.railway\.app$/',
     ],
 
     'allowed_headers' => ['*'],

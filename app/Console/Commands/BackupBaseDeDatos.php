@@ -14,22 +14,85 @@ use Symfony\Component\Process\Process;
  * lado del servidor — sin esto, el único backup que existía dependía de que
  * un dueño de empresa se acuerde de tocar el botón de exportar.
  *
- * Requiere que el servidor tenga `mysqldump` en el PATH y que el cron del
- * host llame a `php artisan schedule:run` cada minuto (requisito estándar de
- * Laravel) — sin ese cron, esto nunca se dispara solo por más que esté acá.
+ * Soporta los dos motores que este proyecto puede usar: SQLite (instalación
+ * local típica, un solo archivo — el caso común) y MySQL (si el local ya
+ * tiene un servidor de base de datos propio). Elige la rama según
+ * DB_CONNECTION. Requiere que el cron del host llame a
+ * `php artisan schedule:run` cada minuto (requisito estándar de Laravel) —
+ * sin ese cron, esto nunca se dispara solo por más que esté acá.
  */
 class BackupBaseDeDatos extends Command
 {
     protected $signature = 'backup:run {--dias-retencion=14 : Cuántos días de backups conservar}';
 
-    protected $description = 'Genera un dump completo de la base de datos y borra los backups más viejos que el período de retención';
+    protected $description = 'Genera un backup completo de la base de datos y borra los backups más viejos que el período de retención';
 
     public function handle(): int
     {
         $directorio = storage_path('app/backups');
         File::ensureDirectoryExists($directorio);
 
-        $conexion = config('database.connections.' . config('database.default'));
+        $driver = config('database.default');
+        $archivo = $driver === 'sqlite'
+            ? $this->backupSqlite($directorio)
+            : $this->backupMysql($directorio);
+
+        if ($archivo === null) {
+            return self::FAILURE;
+        }
+
+        $this->info("Backup generado: {$archivo}");
+
+        $dias = (int) $this->option('dias-retencion');
+        $borrados = 0;
+
+        foreach (File::files($directorio) as $file) {
+            if (now()->timestamp - $file->getMTime() > $dias * 86400) {
+                File::delete($file->getPathname());
+                $borrados++;
+            }
+        }
+
+        if ($borrados > 0) {
+            $this->info("Se borraron {$borrados} backups con más de {$dias} días.");
+        }
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * SQLite es un solo archivo: el backup es una copia + gzip, sin depender
+     * de ninguna herramienta externa instalada en el sistema.
+     */
+    private function backupSqlite(string $directorio): ?string
+    {
+        $baseDatos = config('database.connections.sqlite.database');
+        if (!File::exists($baseDatos)) {
+            Log::error('Falló el backup automático: no se encontró el archivo de la base SQLite', ['path' => $baseDatos]);
+            $this->error("No se encontró el archivo de la base SQLite en: {$baseDatos}");
+            return null;
+        }
+
+        $archivo = $directorio . '/backup-' . now()->format('Y-m-d_His') . '.sqlite.gz';
+
+        $origen  = fopen($baseDatos, 'rb');
+        $destino = gzopen($archivo, 'wb9');
+        while (!feof($origen)) {
+            gzwrite($destino, fread($origen, 1024 * 1024));
+        }
+        fclose($origen);
+        gzclose($destino);
+
+        return $archivo;
+    }
+
+    /**
+     * MySQL: mismo dump vía mysqldump que antes, para cuando este backend
+     * corre contra un servidor MySQL propio en vez del SQLite local.
+     */
+    private function backupMysql(string $directorio): ?string
+    {
+        $conexion = config('database.connections.mysql');
         $archivo  = $directorio . '/backup-' . now()->format('Y-m-d_His') . '.sql.gz';
 
         $comando = sprintf(
@@ -54,25 +117,9 @@ class BackupBaseDeDatos extends Command
             if (File::exists($archivo)) {
                 File::delete($archivo);
             }
-            return self::FAILURE;
+            return null;
         }
 
-        $this->info("Backup generado: {$archivo}");
-
-        $dias = (int) $this->option('dias-retencion');
-        $borrados = 0;
-
-        foreach (File::files($directorio) as $file) {
-            if (now()->timestamp - $file->getMTime() > $dias * 86400) {
-                File::delete($file->getPathname());
-                $borrados++;
-            }
-        }
-
-        if ($borrados > 0) {
-            $this->info("Se borraron {$borrados} backups con más de {$dias} días.");
-        }
-
-        return self::SUCCESS;
+        return $archivo;
     }
 }

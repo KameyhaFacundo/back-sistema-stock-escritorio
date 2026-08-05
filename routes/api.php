@@ -7,9 +7,6 @@ use App\Http\Controllers\EtiquetaController;
 use App\Http\Controllers\GoogleAuthController;
 use App\Http\Controllers\InventarioController;
 use App\Http\Controllers\MercadoPagoConexionController;
-use App\Http\Controllers\SubscripcionController;
-use App\Http\Controllers\FacturacionPackController;
-use App\Http\Controllers\SuperAdminController;
 use App\Http\Controllers\CategoriasController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DeudasController;
@@ -67,7 +64,6 @@ $apiRoutes = function () {
         // prueba de identidad (mismo criterio que reset-password), no requiere JWT.
         Route::post('confirmar-email', [UsersController::class, 'confirmarEmail'])
             ->middleware(config('rate_limiting.api.forgot_password'));
-        Route::post('suscripcion/webhook', [SubscripcionController::class, 'webhook']);
 
         // MP redirige acá tras la autorización — sin JWT, la empresa viaja en `state`
         Route::get('mercadopago/callback', [MercadoPagoConexionController::class, 'callback']);
@@ -98,28 +94,6 @@ $apiRoutes = function () {
             Route::post('desactivar', [TwoFactorController::class, 'desactivar']);
         });
 
-        // Super Admin — el middleware es la defensa de fondo; cada método de
-        // SuperAdminController además llama a checkSuperAdmin() por su cuenta.
-        Route::prefix('super-admin')->middleware('super_admin')->group(function () {
-            Route::get('empresas',                        [SuperAdminController::class, 'empresas']);
-            Route::get('empresas/{id}',                   [SuperAdminController::class, 'empresa']);
-            Route::put('empresas/{id}',                   [SuperAdminController::class, 'updateEmpresa']);
-            Route::post('empresas/{id}/extender-trial',   [SuperAdminController::class, 'extenderTrial']);
-            Route::post('empresas/{id}/registrar-pago',   [SuperAdminController::class, 'registrarPago']);
-            Route::post('empresas/{id}/facturas',         [SuperAdminController::class, 'acreditarFacturas']);
-            Route::put('empresas/{id}/toggle-suspendida', [SuperAdminController::class, 'toggleSuspendida']);
-            Route::post('empresas/{id}/usuarios',         [SuperAdminController::class, 'crearUsuario']);
-            Route::delete('usuarios/{id}',                [SuperAdminController::class, 'eliminarUsuario']);
-            Route::put('usuarios/{id}/toggle-admin',      [SuperAdminController::class, 'toggleAdmin']);
-            Route::put('usuarios/{id}/reset-password',    [SuperAdminController::class, 'resetearPassword']);
-            Route::put('usuarios/{id}',                   [SuperAdminController::class, 'actualizarUsuario']);
-            Route::get('alertas-trial',                   [SuperAdminController::class, 'alertasTrial']);
-            Route::get('historial-pagos',                 [SuperAdminController::class, 'historialPagos']);
-            Route::get('ingresos',                        [SuperAdminController::class, 'ingresos']);
-            Route::post('empresas/{id}/impersonar',       [SuperAdminController::class, 'impersonar']);
-            Route::get('actividad',                       [SuperAdminController::class, 'actividad']);
-        });
-
         Route::get('dashboard/stats', [DashboardController::class, 'stats'])->middleware('permisos.verify:view-dashboard');
 
         // IA / sugerencias
@@ -130,17 +104,7 @@ $apiRoutes = function () {
         Route::post('asistente/preguntar', [AsistenteController::class, 'preguntar'])
             ->middleware(config('rate_limiting.api.asistente_sistema'));
 
-        // Fuera de empresa.activa a propósito: una empresa bloqueada por trial vencido
-        // tiene que poder seguir pagando para reactivarse.
-        Route::post('suscripcion/crear', [SubscripcionController::class, 'crear']);
-        // Mismo criterio: comprar un pack no debería quedar bloqueado por
-        // empresa.activa (aunque en la práctica ya se filtra por tener la
-        // feature 'facturacion' habilitada, ver FacturacionPackController).
-        Route::post('facturacion-pack/crear', [FacturacionPackController::class, 'crear']);
-
-        Route::group(['middleware' => ['empresa.activa']], function () {
-
-            Route::prefix('users')->group(function () {
+        Route::prefix('users')->group(function () {
                 Route::get('/',              [UsersController::class, 'index'])   ->middleware('permisos.verify:list-usuarios');
                 Route::get('{id}',           [UsersController::class, 'show'])    ->middleware('permisos.verify:view-usuarios');
                 Route::post('/',             [UsersController::class, 'store'])   ->middleware('permisos.verify:create-usuarios');
@@ -331,7 +295,6 @@ $apiRoutes = function () {
             Route::delete('empresa/logo', [EmpresaController::class, 'eliminarLogo'])->middleware('permisos.verify:update-configuracion');
             Route::post('empresa/arca', [EmpresaController::class, 'actualizarArca'])->middleware('permisos.verify:update-configuracion');
             Route::delete('empresa/arca', [EmpresaController::class, 'eliminarArca'])->middleware('permisos.verify:update-configuracion');
-            Route::get('empresa/pagos', [EmpresaController::class, 'pagos'])->middleware('permisos.verify:view-configuracion');
             Route::get('empresa/exportar-datos', [EmpresaController::class, 'exportarDatos'])->middleware('permisos.verify:update-configuracion');
             Route::get('empresa/catalogo', [CatalogoController::class, 'config'])->middleware('permisos.verify:view-configuracion');
             Route::put('empresa/catalogo', [CatalogoController::class, 'actualizar'])->middleware('permisos.verify:update-configuracion');
@@ -370,7 +333,6 @@ $apiRoutes = function () {
                 });
             });
 
-        }); // empresa.activa
     }); // jwt.verify
 };
 

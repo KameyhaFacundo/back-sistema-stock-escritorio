@@ -184,32 +184,6 @@ class EmpresaController extends Controller
     }
 
     /**
-     * Historial de pagos de suscripción de la empresa del usuario autenticado
-     * (a diferencia de SuperAdminController::historialPagos, que ve todas las
-     * empresas — acá cada empresa solo ve los suyos).
-     */
-    public function pagos(): JsonResponse
-    {
-        $empresa = auth('api')->user()->empresa;
-        if (!$empresa) {
-            return response()->json(['success' => false, 'message' => 'No tenés una empresa asociada'], 400);
-        }
-
-        $pagos = $empresa->pagos()
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->map(fn ($p) => [
-                'id'    => $p->id,
-                'plan'  => $p->plan,
-                'ciclo' => $p->ciclo,
-                'monto' => $p->monto,
-                'fecha' => $p->created_at,
-            ]);
-
-        return response()->json(['success' => true, 'data' => $pagos]);
-    }
-
-    /**
      * GET /empresa/exportar-datos — backup completo de la empresa del usuario
      * autenticado en un .zip con un CSV por tabla, para que el dueño pueda
      * tener su propio respaldo o migrarse a otro sistema si quiere.

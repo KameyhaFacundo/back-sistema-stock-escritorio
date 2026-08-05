@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use App\Http\Controllers\SubscripcionController;
+use App\Http\Controllers\Concerns\VerifiesMercadoPagoWebhook;
 use Illuminate\Http\Request;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -19,9 +19,12 @@ class VerifiesMercadoPagoWebhookTest extends TestCase
 {
     private function firmaValida(Request $request): bool
     {
-        $metodo = new ReflectionMethod(SubscripcionController::class, 'firmaMercadoPagoValida');
+        $sujeto = new class {
+            use VerifiesMercadoPagoWebhook;
+        };
+        $metodo = new ReflectionMethod($sujeto::class, 'firmaMercadoPagoValida');
         $metodo->setAccessible(true);
-        return $metodo->invoke(new SubscripcionController(), $request);
+        return $metodo->invoke($sujeto, $request);
     }
 
     // env() en Laravel lee de $_ENV/$_SERVER (repositorio de phpdotenv, poblado

@@ -20,50 +20,29 @@ trait ChecksPlanLimits
     }
 
     /**
-     * Devuelve una respuesta 403 si la empresa ya alcanzó el límite de su
-     * plan para el recurso indicado ('productos', 'usuarios' o 'sucursales'),
-     * o null si todavía tiene lugar para crear uno más.
+     * Build local de un solo comercio, sin planes: nunca hay límite de
+     * recursos que hacer cumplir. Se deja el método (en vez de sacarlo de los
+     * controllers que lo llaman) para no tener que tocar esos 13 archivos.
      */
     protected function limitePlanExcedido(Empresa $empresa, string $recurso, int $cantidadActual): ?JsonResponse
     {
-        $limites = config('planes.limites')[$empresa->plan] ?? config('planes.limites')['free'];
-        $limite  = $limites[$recurso] ?? null;
-
-        if ($limite !== null && $cantidadActual >= $limite) {
-            return response()->json([
-                'success' => false,
-                'message' => "Alcanzaste el límite de {$limite} {$recurso} de tu plan actual. Actualizá tu plan para seguir agregando.",
-            ], 403);
-        }
-
         return null;
     }
 
     /**
-     * ¿El plan de la empresa incluye esta función ('catalogo' o 'ia' — ver
-     * config/planes.php)? Para chequeos de solo lectura (armar una respuesta
-     * informativa); para bloquear una acción usá funcionNoDisponibleEnPlan.
+     * Build local de un solo comercio: todas las funciones están siempre
+     * disponibles, no hay features atadas a un plan pago.
      */
     protected function planTieneFuncion(Empresa $empresa, string $feature): bool
     {
-        $features = config('planes.features')[$empresa->plan] ?? config('planes.features')['free'];
-        return !empty($features[$feature]);
+        return true;
     }
 
     /**
-     * Devuelve una respuesta 403 si el plan de la empresa no incluye la
-     * función indicada, o null si sí la tiene disponible.
+     * Ídem — nunca bloquea, ver planTieneFuncion().
      */
     protected function funcionNoDisponibleEnPlan(Empresa $empresa, string $feature, string $mensaje): ?JsonResponse
     {
-        if ($this->planTieneFuncion($empresa, $feature)) {
-            return null;
-        }
-
-        return response()->json([
-            'success'        => false,
-            'message'        => $mensaje,
-            'plan_requerido' => true,
-        ], 403);
+        return null;
     }
 }

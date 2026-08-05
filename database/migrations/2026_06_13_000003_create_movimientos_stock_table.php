@@ -13,7 +13,7 @@ return new class extends Migration
             $table->foreignId('id_producto')->nullable()->constrained('productos')->nullOnDelete();
             $table->string('producto');
             $table->string('codigo', 100)->nullable();
-            $table->enum('tipo', ['venta', 'compra', 'ajuste']);
+            $table->enum('tipo', ['venta', 'compra', 'ajuste', 'transferencia_salida', 'transferencia_entrada']);
             $table->string('sub_tipo', 255)->nullable();
             $table->integer('cantidad');
             $table->string('nota', 500)->nullable();

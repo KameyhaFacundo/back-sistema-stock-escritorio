@@ -57,14 +57,6 @@ class FacturaController extends Controller
         return DB::transaction(function () use ($request, $user) {
             $empresa = Empresa::whereKey($user->empresa_id)->lockForUpdate()->first();
 
-            if ($empresa->facturas_disponibles <= 0) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No te quedan facturas disponibles. Comprá un pack para seguir facturando.',
-                    'sin_facturas_disponibles' => true,
-                ], 403);
-            }
-
             $arca    = new ArcaService($empresa);
 
             $ultima = Factura::where('empresa_id', $user->empresa_id)
@@ -113,8 +105,6 @@ class FacturaController extends Controller
                 'cliente_nombre'   => $request->cliente_nombre,
                 'estado'           => $resultado['modo_prueba'] ?? false ? 'prueba' : 'emitida',
             ]);
-
-            $empresa->decrement('facturas_disponibles');
 
             return response()->json([
                 'success' => true,

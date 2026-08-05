@@ -41,7 +41,8 @@ class DatosRealesSeeder extends Seeder
         }
 
         // ── Limpiar datos (excepto users y tablas de sistema) ───────────
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        $sqlite = DB::getDriverName() === 'sqlite';
+        DB::statement($sqlite ? 'PRAGMA foreign_keys = OFF' : 'SET FOREIGN_KEY_CHECKS=0');
 
         $ventaIds   = DB::table('ventas')->where('empresa_id', $empresaId)->pluck('id');
         $compraIds  = DB::table('compras')->where('empresa_id', $empresaId)->pluck('id');
@@ -60,7 +61,7 @@ class DatosRealesSeeder extends Seeder
         DB::table('clientes')->where('empresa_id', $empresaId)->delete();
         DB::table('proveedores')->where('empresa_id', $empresaId)->delete();
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        DB::statement($sqlite ? 'PRAGMA foreign_keys = ON' : 'SET FOREIGN_KEY_CHECKS=1');
 
         $now = now()->toDateTimeString();
 

@@ -1,7 +1,8 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Primer paso (de 3) para poder vender productos por peso/longitud —
@@ -11,11 +12,6 @@ use Illuminate\Support\Facades\DB;
  * generar un dato decimal a partir de este deploy — el objetivo es
  * verificar el ALTER TABLE de forma aislada antes de tocar la lógica de
  * negocio (StockService, combos, validaciones) en un paso siguiente.
- *
- * Se usa DB::statement() en vez de Schema::table()->change() porque
- * este proyecto no tiene doctrine/dbal instalado (requerido por el
- * método fluido ->change() de Laravel) y no vale la pena sumar una
- * dependencia nueva solo para 6 ALTER TABLE puntuales.
  *
  * decimal(12,2) replica la precisión que ya usa `lotes.cantidad` desde
  * antes — no se inventa un formato nuevo.
@@ -29,21 +25,41 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement('ALTER TABLE lineas_ventas MODIFY cantidad DECIMAL(12,2) NOT NULL');
-        DB::statement('ALTER TABLE lineas_compras MODIFY cantidad DECIMAL(12,2) NOT NULL');
-        DB::statement('ALTER TABLE movimientos_stock MODIFY cantidad DECIMAL(12,2) NOT NULL');
-        DB::statement('ALTER TABLE combo_componentes MODIFY cantidad DECIMAL(12,2) UNSIGNED NOT NULL DEFAULT 1.00');
-        DB::statement('ALTER TABLE producto_stock MODIFY stock DECIMAL(12,2) NOT NULL DEFAULT 0.00');
-        DB::statement('ALTER TABLE producto_stock MODIFY stock_minimo DECIMAL(12,2) NOT NULL DEFAULT 5.00');
+        Schema::table('lineas_ventas', function (Blueprint $table) {
+            $table->decimal('cantidad', 12, 2)->change();
+        });
+        Schema::table('lineas_compras', function (Blueprint $table) {
+            $table->decimal('cantidad', 12, 2)->change();
+        });
+        Schema::table('movimientos_stock', function (Blueprint $table) {
+            $table->decimal('cantidad', 12, 2)->change();
+        });
+        Schema::table('combo_componentes', function (Blueprint $table) {
+            $table->unsignedDecimal('cantidad', 12, 2)->default(1.00)->change();
+        });
+        Schema::table('producto_stock', function (Blueprint $table) {
+            $table->decimal('stock', 12, 2)->default(0.00)->change();
+            $table->decimal('stock_minimo', 12, 2)->default(5.00)->change();
+        });
     }
 
     public function down(): void
     {
-        DB::statement('ALTER TABLE lineas_ventas MODIFY cantidad INT NOT NULL');
-        DB::statement('ALTER TABLE lineas_compras MODIFY cantidad INT NOT NULL');
-        DB::statement('ALTER TABLE movimientos_stock MODIFY cantidad INT NOT NULL');
-        DB::statement('ALTER TABLE combo_componentes MODIFY cantidad INT UNSIGNED NOT NULL DEFAULT 1');
-        DB::statement('ALTER TABLE producto_stock MODIFY stock INT NOT NULL DEFAULT 0');
-        DB::statement('ALTER TABLE producto_stock MODIFY stock_minimo INT NOT NULL DEFAULT 5');
+        Schema::table('lineas_ventas', function (Blueprint $table) {
+            $table->integer('cantidad')->change();
+        });
+        Schema::table('lineas_compras', function (Blueprint $table) {
+            $table->integer('cantidad')->change();
+        });
+        Schema::table('movimientos_stock', function (Blueprint $table) {
+            $table->integer('cantidad')->change();
+        });
+        Schema::table('combo_componentes', function (Blueprint $table) {
+            $table->unsignedInteger('cantidad')->default(1)->change();
+        });
+        Schema::table('producto_stock', function (Blueprint $table) {
+            $table->integer('stock')->default(0)->change();
+            $table->integer('stock_minimo')->default(5)->change();
+        });
     }
 };

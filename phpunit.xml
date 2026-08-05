@@ -21,6 +21,11 @@
         <env name="APP_ENV" value="testing"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_DRIVER" value="array"/>
+        <!-- Sin RefreshDatabase: los tests de servicios (VentaCreacionServiceTest,
+             VarianteProductoServiceTest, etc.) usan DatabaseTransactions y esperan
+             una base ya migrada y con datos (ver DatosRealesSeeder) — no una
+             sqlite :memory: vacía por corrida. Corren contra la misma conexión
+             que .env (database/database.sqlite local). -->
         <!-- <env name="DB_CONNECTION" value="sqlite"/> -->
         <!-- <env name="DB_DATABASE" value=":memory:"/> -->
         <env name="MAIL_MAILER" value="array"/>
