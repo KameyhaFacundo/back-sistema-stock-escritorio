@@ -180,9 +180,12 @@ class CajaController extends Controller
     {
         $request->validate([
             'tipo'   => 'required|in:ingreso,egreso',
+            'metodo' => 'nullable|in:efectivo,transferencia',
             'monto'  => 'required|numeric|min:0.01',
             'motivo' => 'nullable|string|max:255',
         ]);
+
+        $metodo = $request->metodo ?? 'efectivo';
 
         DB::beginTransaction();
         try {
@@ -195,15 +198,20 @@ class CajaController extends Controller
             $mov = MovimientoCaja::create([
                 'id_turno' => $turno->id,
                 'tipo'     => $request->tipo,
+                'metodo'   => $metodo,
                 'monto'    => $request->monto,
                 'motivo'   => $request->motivo,
                 'hora'     => $this->nowHora(),
             ]);
 
-            $turno->efectivo_actual = $request->tipo === 'ingreso'
-                ? $turno->efectivo_actual + $request->monto
-                : $turno->efectivo_actual - $request->monto;
-            $turno->save();
+            // Una transferencia no es plata física — no toca el efectivo que
+            // el arqueo de cierre va a pedir contar a mano.
+            if ($metodo === 'efectivo') {
+                $turno->efectivo_actual = $request->tipo === 'ingreso'
+                    ? $turno->efectivo_actual + $request->monto
+                    : $turno->efectivo_actual - $request->monto;
+                $turno->save();
+            }
 
             DB::commit();
 

@@ -8,6 +8,7 @@ use App\Models\Empresa;
 use App\Models\Factura;
 use App\Models\Permiso;
 use App\Models\User;
+use App\Models\Venta;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -38,9 +39,20 @@ class FacturaControllerTest extends TestCase
         return [$usuario, $empresa, $token];
     }
 
-    private function payloadFactura(): array
+    // Toda factura requiere id_venta (ver validación de FacturaController::emitir()
+    // — una factura sin venta asociada ya no es un estado válido en esta app).
+    private function crearVenta(Empresa $empresa, User $usuario): Venta
+    {
+        return Venta::create([
+            'empresa_id' => $empresa->id, 'id_usuario' => $usuario->nro_usu, 'estado' => 'confirmada',
+            'fecha' => date('Y-m-d'), 'monto_total' => 1000, 'cuit' => '20304050607',
+        ]);
+    }
+
+    private function payloadFactura(int $idVenta): array
     {
         return [
+            'id_venta' => $idVenta,
             'total' => 1000,
             'items' => [['precio' => 1000, 'cantidad' => 1]],
         ];
@@ -48,25 +60,56 @@ class FacturaControllerTest extends TestCase
 
     public function test_emitir_rechaza_facturacion_desactivada(): void
     {
+        // Nunca llega a validar id_venta — el chequeo de "arca" desactivado
+        // corta antes, así que un id inexistente acá no afecta el test.
         [, , $token] = $this->usuarioConEmpresa(['plan' => 'pro', 'arca' => false]);
 
         $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
-            ->postJson('/api/v1/facturas/emitir', $this->payloadFactura());
+            ->postJson('/api/v1/facturas/emitir', $this->payloadFactura(0));
 
         $response->assertStatus(403);
     }
 
     public function test_emitir_en_modo_prueba_genera_factura_con_cae_ficticio(): void
     {
-        [, , $token] = $this->usuarioConEmpresa(['plan' => 'pro', 'arca' => true, 'facturas_disponibles' => 10]);
+        [$usuario, $empresa, $token] = $this->usuarioConEmpresa(['plan' => 'pro', 'arca' => true, 'facturas_disponibles' => 10]);
+        $venta = $this->crearVenta($empresa, $usuario);
 
         $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
-            ->postJson('/api/v1/facturas/emitir', $this->payloadFactura());
+            ->postJson('/api/v1/facturas/emitir', $this->payloadFactura($venta->id));
 
         $response->assertStatus(200);
         $response->assertJson(['success' => true, 'modo_prueba' => true]);
         $this->assertNotEmpty($response->json('data.cae'));
         $this->assertDatabaseHas('facturas', ['estado' => 'prueba', 'total' => 1000]);
+    }
+
+    // Regresión: id_venta era nullable, así que se podían emitir facturas
+    // "sueltas" sin venta asociada — ver 2026_08_05_000010_make_id_venta_not_null.
+    public function test_emitir_rechaza_si_no_manda_id_venta(): void
+    {
+        [, , $token] = $this->usuarioConEmpresa(['plan' => 'pro', 'arca' => true, 'facturas_disponibles' => 10]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/facturas/emitir', [
+                'total' => 1000,
+                'items' => [['precio' => 1000, 'cantidad' => 1]],
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['id_venta']);
+    }
+
+    public function test_emitir_rechaza_id_venta_inexistente(): void
+    {
+        [$usuario, $empresa, $token] = $this->usuarioConEmpresa(['plan' => 'pro', 'arca' => true, 'facturas_disponibles' => 10]);
+        $venta = $this->crearVenta($empresa, $usuario);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/facturas/emitir', $this->payloadFactura($venta->id + 999999));
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['id_venta']);
     }
 
     /**
@@ -86,10 +129,11 @@ class FacturaControllerTest extends TestCase
     public function test_emitir_con_arca_configurado_queda_pendiente_y_encola_el_job(): void
     {
         Queue::fake();
-        [, , $token] = $this->empresaConArcaConfigurado();
+        [$usuario, $empresa, $token] = $this->empresaConArcaConfigurado();
+        $venta = $this->crearVenta($empresa, $usuario);
 
         $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
-            ->postJson('/api/v1/facturas/emitir', $this->payloadFactura());
+            ->postJson('/api/v1/facturas/emitir', $this->payloadFactura($venta->id));
 
         $response->assertStatus(200);
         $response->assertJson(['success' => true, 'pendiente' => true]);
@@ -105,9 +149,10 @@ class FacturaControllerTest extends TestCase
     {
         Queue::fake();
         [$usuario, $empresa, $token] = $this->empresaConArcaConfigurado();
+        $venta = $this->crearVenta($empresa, $usuario);
 
         $original = Factura::create([
-            'empresa_id' => $empresa->id, 'id_usuario' => $usuario->nro_usu,
+            'empresa_id' => $empresa->id, 'id_usuario' => $usuario->nro_usu, 'id_venta' => $venta->id,
             'tipo_comprobante' => 6, 'punto_venta' => 1, 'numero' => 1,
             'cae' => '99999999999999', 'vencimiento_cae' => date('Ymd', strtotime('+10 days')),
             'fecha' => date('Ymd'), 'total' => 1000, 'neto' => 826.45, 'iva' => 173.55,
@@ -129,9 +174,10 @@ class FacturaControllerTest extends TestCase
     public function test_no_se_puede_acreditar_una_factura_todavia_pendiente(): void
     {
         [$usuario, $empresa, $token] = $this->empresaConArcaConfigurado();
+        $venta = $this->crearVenta($empresa, $usuario);
 
         $pendiente = Factura::create([
-            'empresa_id' => $empresa->id, 'id_usuario' => $usuario->nro_usu,
+            'empresa_id' => $empresa->id, 'id_usuario' => $usuario->nro_usu, 'id_venta' => $venta->id,
             'tipo_comprobante' => 6, 'punto_venta' => 1, 'numero' => null,
             'cae' => null, 'vencimiento_cae' => null,
             'fecha' => date('Ymd'), 'total' => 1000, 'neto' => 826.45, 'iva' => 173.55,

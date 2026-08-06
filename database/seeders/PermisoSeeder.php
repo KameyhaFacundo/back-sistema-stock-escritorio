@@ -87,6 +87,13 @@ class PermisoSeeder extends Seeder
             ['codigo' => 'anular-ventas', 'nombre' => 'Anular venta', 'grupo' => 'ventas'],
             ['codigo' => 'devolver-ventas', 'nombre' => 'Devolver productos de una venta', 'grupo' => 'ventas'],
 
+            // Presupuestos
+            ['codigo' => 'list-presupuestos', 'nombre' => 'Listar presupuestos', 'grupo' => 'presupuestos'],
+            ['codigo' => 'view-presupuestos', 'nombre' => 'Ver presupuesto', 'grupo' => 'presupuestos'],
+            ['codigo' => 'create-presupuestos', 'nombre' => 'Crear presupuesto', 'grupo' => 'presupuestos'],
+            ['codigo' => 'update-presupuestos', 'nombre' => 'Actualizar presupuesto', 'grupo' => 'presupuestos'],
+            ['codigo' => 'delete-presupuestos', 'nombre' => 'Eliminar presupuesto', 'grupo' => 'presupuestos'],
+
             // Caja
             ['codigo' => 'list-caja',           'nombre' => 'Ver estado de caja',   'grupo' => 'caja'],
             ['codigo' => 'create-caja',         'nombre' => 'Abrir caja / registrar movimiento', 'grupo' => 'caja'],

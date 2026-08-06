@@ -20,6 +20,7 @@ class Producto extends Model
         'empresa_id',
         'producto',
         'codigo',
+        'codigo_barras',
         'imagen_path',
         'precio',
         'costo',

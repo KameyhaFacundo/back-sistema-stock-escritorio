@@ -28,9 +28,12 @@ class DeudasController extends Controller
 
         // Totales globales — DB::table (no el modelo Compra) para no depender de
         // que ningún alias futuro choque con un accessor de Compra (ver resumen()).
+        // where() (no when()) a propósito: cuando $empresaIdTotal es null (usuario
+        // sin empresa asignada) tiene que dar 0 filas, no el total de TODAS las
+        // empresas — when() con un valor falsy directamente omite el filtro.
         $empresaIdTotal = auth('api')->user()?->empresa_id;
         $totalDeuda = DB::table('compras')
-            ->when($empresaIdTotal, fn($q) => $q->where('empresa_id', $empresaIdTotal))
+            ->where('empresa_id', $empresaIdTotal)
             ->whereIn('estado_deuda', ['pendiente', 'parcial'])
             ->whereNull('deleted_at')
             ->selectRaw('SUM(monto_total - monto_pagado) as total')
@@ -52,11 +55,13 @@ class DeudasController extends Controller
         // porque en una fila agrupada $this->monto_total/monto_pagado no
         // existen. Bypasear Eloquent evita ese choque. Como no pasa por el
         // modelo, hay que filtrar por empresa_id a mano (HasTenant no aplica).
+        // where() (no when()): un $empresaId null tiene que dar 0 filas, no
+        // saltarse el filtro y agregar la deuda de TODAS las empresas.
         $empresaId = auth('api')->user()?->empresa_id;
 
         $resumen = DB::table('compras')
             ->join('proveedores', 'compras.id_proveedor', '=', 'proveedores.id')
-            ->when($empresaId, fn($q) => $q->where('compras.empresa_id', $empresaId))
+            ->where('compras.empresa_id', $empresaId)
             ->whereIn('compras.estado_deuda', ['pendiente', 'parcial'])
             ->whereNull('compras.deleted_at')
             ->selectRaw('

@@ -126,9 +126,37 @@ class DashboardController extends Controller
                 ->limit(20)
                 ->get([
                     'productos.id',
-                    DB::raw("CASE WHEN talles.valor IS NOT NULL THEN CONCAT(productos.producto, ' (', talles.valor, ')') ELSE productos.producto END as nombre"),
+                    // CONCAT() es de MySQL — esta app solo corre sobre SQLite (ver
+                    // CLAUDE.md), que concatena con ||. Con CONCAT esto tira
+                    // "no such function" apenas hay una fila real de stock bajo
+                    // con talle asociado (no lo agarraba ningún test hasta ahora).
+                    DB::raw("CASE WHEN talles.valor IS NOT NULL THEN productos.producto || ' (' || talles.valor || ')' ELSE productos.producto END as nombre"),
                     'productos.codigo', 'producto_stock.stock', 'producto_stock.stock_minimo as alerta',
                 ]);
+
+            // Valor de inventario (stock × costo / stock × precio) sumado en la
+            // base, no en el cliente — antes Dashboard.jsx lo calculaba sumando
+            // el array de productos cargado en memoria (limitado a los primeros
+            // 500 del catálogo, ver ProductosContext), así que con un catálogo
+            // más grande el número quedaba silenciosamente subestimado. Mismo
+            // criterio de joins/filtros que $stockBajoQuery de arriba.
+            $valorInventarioQuery = DB::table('producto_stock')
+                ->join('productos', 'productos.id', '=', 'producto_stock.id_producto')
+                ->where('productos.empresa_id', $empresaId)
+                ->where('productos.estado', 1);
+
+            if ($idSucursal) {
+                $valorInventarioQuery->where('producto_stock.id_sucursal', $idSucursal);
+            }
+
+            $valorInventarioRow = $valorInventarioQuery
+                ->selectRaw('COALESCE(SUM(producto_stock.stock * productos.costo), 0) as costo, COALESCE(SUM(producto_stock.stock * productos.precio), 0) as venta')
+                ->first();
+
+            $valorInventario = [
+                'costo' => (float) ($valorInventarioRow->costo ?? 0),
+                'venta' => (float) ($valorInventarioRow->venta ?? 0),
+            ];
 
             // Filtrar por sucursal igual que CajaController::turnoActivo — sin esto,
             // en una empresa con varias sucursales abiertas a la vez (normal en
@@ -192,11 +220,118 @@ class DashboardController extends Controller
                     'ingresosHoy'    => (float) $ingresosHoy,
                     'topProductos'   => $topProductos,
                     'stockBajo'      => $stockBajo,
+                    'valorInventario' => $valorInventario,
                     'caja'           => $cajaData ?? ['abierta' => false],
                     'deudas'         => [
                         'proveedores' => $deudasProveedores,
                         'clientes'    => $fiadosClientes,
                     ],
+                ],
+            ]);
+        });
+    }
+
+    /**
+     * Más vendidos (mismo patrón de agregación que topProductos en stats(),
+     * pero con límite configurable) + productos sin ventas en los últimos
+     * $dias días — para detectar capital parado en mercadería que no rota.
+     * Endpoint aparte de stats() (no comparte su caché de 30s) porque acá
+     * el rango de "sin movimiento" es independiente del desde/hasta que
+     * usa el resto del dashboard.
+     */
+    public function rankingProductos(Request $request)
+    {
+        $user = auth()->user();
+
+        if (!$user->empresa_id) {
+            return response()->json(['success' => true, 'data' => ['masVendidos' => [], 'sinMovimiento' => []]]);
+        }
+
+        $empresaId  = $user->empresa_id;
+        $idSucursal = $user->id_sucursal;
+        $desde = $request->get('desde', Carbon::today()->toDateString());
+        $hasta = $request->get('hasta', Carbon::today()->toDateString());
+        $dias  = (int) $request->get('dias', 30);
+        $limit = min((int) $request->get('limit', 20), 100);
+        $version = (int) Cache::get("dashboard:stats:version:{$empresaId}", 1);
+
+        $cacheKey = "dashboard:ranking:{$empresaId}:{$desde}:{$hasta}:{$dias}:{$limit}:{$idSucursal}:v{$version}";
+
+        return Cache::remember($cacheKey, 30, function () use ($empresaId, $idSucursal, $desde, $hasta, $dias, $limit) {
+            // Mismo COALESCE(id_producto_padre, id) que topProductos en stats() —
+            // ver ese comentario para el porqué (variantes de talle no se duplican).
+            $topIds = DB::table('lineas_ventas')
+                ->join('ventas', 'lineas_ventas.id_venta', '=', 'ventas.id')
+                ->leftJoin('productos', 'productos.id', '=', 'lineas_ventas.id_producto')
+                ->where('ventas.empresa_id', $empresaId)
+                ->where('ventas.estado', '!=', 'cancelada')
+                ->whereBetween('ventas.fecha', [$desde, $hasta])
+                ->select(
+                    DB::raw('COALESCE(productos.id_producto_padre, productos.id, lineas_ventas.id_producto) as id_producto'),
+                    DB::raw('SUM(lineas_ventas.cantidad) as total_unidades'),
+                    DB::raw('SUM(lineas_ventas.precio_venta * lineas_ventas.cantidad) as total_ingresos')
+                )
+                ->groupBy(DB::raw('COALESCE(productos.id_producto_padre, productos.id, lineas_ventas.id_producto)'))
+                ->orderByDesc('total_unidades')
+                ->limit($limit)
+                ->get();
+
+            $productosMap = Producto::whereIn('id', $topIds->pluck('id_producto'))->get()->keyBy('id');
+
+            $masVendidos = $topIds->map(function ($row) use ($productosMap) {
+                $producto = $productosMap->get($row->id_producto);
+                return [
+                    'id'        => $row->id_producto,
+                    'nombre'    => $producto?->producto ?? 'Producto #' . $row->id_producto,
+                    'codigo'    => $producto?->codigo,
+                    'unidades'  => (float) $row->total_unidades,
+                    'ingresos'  => (float) $row->total_ingresos,
+                ];
+            })->values();
+
+            // Productos activos, sin variantes-sombrilla (esas no tienen stock
+            // propio — ver el mismo criterio en el join de stockBajo más arriba),
+            // dados de alta antes del inicio de la ventana (para no marcar como
+            // "sin movimiento" algo que se cargó ayer y todavía no tuvo chance de
+            // venderse), con stock real, y sin ninguna línea de venta confirmada
+            // en los últimos $dias días.
+            $desdeSinMovimiento = Carbon::today()->subDays($dias)->toDateString();
+
+            $stockQuery = DB::table('producto_stock')->select('id_producto', DB::raw('SUM(stock) as stock'));
+            if ($idSucursal) $stockQuery->where('id_sucursal', $idSucursal);
+            $stockQuery->groupBy('id_producto');
+
+            $sinMovimiento = DB::table('productos')
+                ->leftJoinSub($stockQuery, 'ps', 'ps.id_producto', '=', 'productos.id')
+                ->where('productos.empresa_id', $empresaId)
+                ->where('productos.estado', 1)
+                ->where('productos.tiene_variantes', false)
+                ->where('productos.created_at', '<=', $desdeSinMovimiento)
+                ->whereRaw('COALESCE(ps.stock, 0) > 0')
+                ->whereNotIn('productos.id', function ($q) use ($empresaId, $desdeSinMovimiento) {
+                    $q->select('lineas_ventas.id_producto')
+                        ->from('lineas_ventas')
+                        ->join('ventas', 'lineas_ventas.id_venta', '=', 'ventas.id')
+                        ->where('ventas.empresa_id', $empresaId)
+                        ->where('ventas.estado', '!=', 'cancelada')
+                        ->where('ventas.fecha', '>=', $desdeSinMovimiento)
+                        ->whereNotNull('lineas_ventas.id_producto');
+                })
+                ->select(
+                    'productos.id', 'productos.producto as nombre', 'productos.codigo',
+                    DB::raw('COALESCE(ps.stock, 0) as stock'),
+                    DB::raw('COALESCE(ps.stock, 0) * productos.costo as valorCapital')
+                )
+                ->orderByDesc('valorCapital')
+                ->limit($limit)
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data'    => [
+                    'masVendidos'   => $masVendidos,
+                    'sinMovimiento' => $sinMovimiento,
+                    'diasSinMovimiento' => $dias,
                 ],
             ]);
         });
@@ -212,6 +347,7 @@ class DashboardController extends Controller
             'ingresosHoy'    => 0,
             'topProductos'   => [],
             'stockBajo'      => [],
+            'valorInventario' => ['costo' => 0, 'venta' => 0],
             'caja'           => ['abierta' => false],
             'deudas'         => ['proveedores' => [], 'clientes' => []],
         ];

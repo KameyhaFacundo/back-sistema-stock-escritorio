@@ -19,6 +19,7 @@ class CreateProductoRequest extends FormRequest
         return [
             'producto'     => 'required|string|max:200',
             'codigo'       => 'nullable|string|max:100|unique:productos,codigo',
+            'codigo_barras' => 'nullable|string|max:100|unique:productos,codigo_barras',
             'precio'       => 'required|numeric|min:0',
             'costo'        => 'nullable|numeric|min:0',
             // Unidades fraccionables (kg/metro/litro) son solo para ferretería, nunca

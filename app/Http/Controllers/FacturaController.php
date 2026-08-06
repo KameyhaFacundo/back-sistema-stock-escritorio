@@ -36,7 +36,9 @@ class FacturaController extends Controller
         }
 
         $request->validate([
-            'id_venta'          => 'nullable|integer',
+            // Toda factura tiene que venir de una venta real — no se emiten
+            // facturas "sueltas" en esta app (ver Venta::factura(), hasOne).
+            'id_venta'          => 'required|integer|exists:ventas,id',
             'total'             => 'required|numeric|min:0',
             'items'             => 'required|array|min:1',
             'items.*.precio'    => 'required|numeric|min:0',

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\EmitirFacturaJob;
 use App\Models\Empresa;
 use App\Models\Factura;
+use App\Models\Venta;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
@@ -30,8 +31,13 @@ class EmitirFacturaJobTest extends TestCase
             'cuit' => '20304050607', 'arca_cert' => 'cert', 'arca_key' => 'key', 'arca_punto_venta' => 1,
         ]);
 
+        $venta = Venta::create([
+            'empresa_id' => $empresa->id, 'id_usuario' => 1, 'estado' => 'confirmada',
+            'fecha' => date('Y-m-d'), 'monto_total' => 1000,
+        ]);
+
         $factura = Factura::create([
-            'empresa_id' => $empresa->id, 'id_usuario' => 1,
+            'empresa_id' => $empresa->id, 'id_usuario' => 1, 'id_venta' => $venta->id,
             'tipo_comprobante' => 6, 'punto_venta' => 1, 'numero' => 5,
             'cae' => '12345678901234', 'vencimiento_cae' => '20260101',
             'fecha' => date('Ymd'), 'total' => 1000, 'neto' => 826.45, 'iva' => 173.55,

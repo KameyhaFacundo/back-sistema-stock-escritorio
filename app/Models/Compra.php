@@ -6,6 +6,7 @@ use App\Models\Concerns\HasTenant;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 class Compra extends Model
 {
@@ -17,8 +18,10 @@ class Compra extends Model
         'empresa_id', 'id_sucursal',
         'id_proveedor', 'id_usuario', 'estado', 'fecha',
         'metodo_pago', 'estado_deuda', 'monto_pagado', 'monto_total', 'cuit',
-        'id_usuario_anulacion', 'fecha_anulacion',
+        'id_usuario_anulacion', 'fecha_anulacion', 'comprobante_path',
     ];
+
+    protected $appends = ['comprobante_url'];
 
     protected $casts = [
         'fecha'           => 'date:Y-m-d',
@@ -30,6 +33,11 @@ class Compra extends Model
     public function getSaldoPendienteAttribute(): float
     {
         return max(0, (float)$this->monto_total - (float)$this->monto_pagado);
+    }
+
+    public function getComprobanteUrlAttribute(): ?string
+    {
+        return $this->comprobante_path ? Storage::disk('public')->url($this->comprobante_path) : null;
     }
 
     // Relaciones

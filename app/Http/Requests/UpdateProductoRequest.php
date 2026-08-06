@@ -32,6 +32,7 @@ class UpdateProductoRequest extends FormRequest
         return [
             'producto'     => 'sometimes|string|max:200',
             'codigo'       => "sometimes|nullable|string|max:100|unique:productos,codigo,{$id}",
+            'codigo_barras' => "sometimes|nullable|string|max:100|unique:productos,codigo_barras,{$id}",
             'precio'       => 'sometimes|numeric|min:0',
             'costo'        => 'sometimes|nullable|numeric|min:0',
             'unidad_medida' => ['sometimes', 'nullable', 'string', Rule::in(['unidad', 'kg', 'metro', 'litro']), function ($attribute, $value, $fail) use ($esCombo) {

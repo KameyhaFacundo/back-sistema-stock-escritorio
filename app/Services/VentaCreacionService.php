@@ -182,7 +182,12 @@ class VentaCreacionService
             'cuit'          => $cliente?->cuit,
         ]);
 
-        $subTipoMovimiento = ($datos['numero_ticket'] ?? null) ? "Ticket #{$datos['numero_ticket']}" : "Venta #{$venta->id}";
+        // numero_ticket es un código interno generado offline (ver Home.jsx::
+        // generarTicketId) para poder armar la venta sin ir al servidor — no es
+        // legible ni es el número real de la venta. La descripción del movimiento
+        // siempre muestra el id real, que es lo que el usuario reconoce en Caja/
+        // Clientes/Movimientos.
+        $subTipoMovimiento = "Venta #{$venta->id}";
 
         foreach ($datos['lineas'] as $linea) {
             // Una sola LineaVenta por línea del carrito, sea combo o producto suelto

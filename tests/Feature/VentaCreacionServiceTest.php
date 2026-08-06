@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Lote;
+use App\Models\MovimientoStock;
 use App\Models\Producto;
 use App\Models\ProductoStock;
 use App\Models\Sucursal;
@@ -62,6 +63,27 @@ class VentaCreacionServiceTest extends TestCase
 
         $stock = ProductoStock::where('id_producto', $producto->id)->where('id_sucursal', $sucursal->id)->first();
         $this->assertEquals(5, $stock->stock, 'producto_stock.stock debe coincidir con lo que queda en los lotes');
+    }
+
+    public function test_movimiento_de_venta_describe_el_id_real_no_el_ticket_interno(): void
+    {
+        ['producto' => $producto, 'usuario' => $usuario, 'turno' => $turno] = $this->armarEscenario();
+
+        // numero_ticket es el código interno que genera Home.jsx offline (ej.
+        // "MSGXHK4D-9361") para no depender del servidor al armar la venta —
+        // no es legible para el usuario, así que el movimiento de stock debe
+        // describir la venta por su id real, no por ese código.
+        $venta = app(VentaCreacionService::class)->crear([
+            'lineas'        => [['id_producto' => $producto->id, 'cantidad' => 1, 'precio_venta' => (float) $producto->precio]],
+            'metodo_pago'   => 'efectivo',
+            'numero_ticket' => 'MSGXHK4D-9361',
+            'id_usuario'    => $usuario->nro_usu,
+            'fecha'         => now()->format('Y-m-d'),
+            'hora'          => now()->format('H:i'),
+        ], $producto->empresa_id, $turno->id);
+
+        $movimiento = MovimientoStock::where('id_producto', $producto->id)->where('tipo', 'venta')->latest('id')->first();
+        $this->assertEquals("Venta #{$venta->id}", $movimiento->sub_tipo);
     }
 
     public function test_crear_venta_rechaza_si_no_hay_stock_suficiente(): void

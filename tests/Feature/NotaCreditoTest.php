@@ -38,8 +38,12 @@ class NotaCreditoTest extends TestCase
 
     private function facturaDePrueba(Empresa $empresa, int $tipoComprobante, float $total): Factura
     {
+        $venta = Venta::create([
+            'empresa_id' => $empresa->id, 'id_usuario' => auth()->id(),
+            'estado' => 'confirmada', 'fecha' => date('Y-m-d'), 'monto_total' => $total,
+        ]);
         return Factura::create([
-            'empresa_id' => $empresa->id, 'id_venta' => null, 'id_usuario' => auth()->id(),
+            'empresa_id' => $empresa->id, 'id_venta' => $venta->id, 'id_usuario' => auth()->id(),
             'tipo_comprobante' => $tipoComprobante, 'punto_venta' => 1, 'numero' => random_int(1, 999999),
             'cae' => '99999999999999', 'vencimiento_cae' => date('Ymd', strtotime('+10 days')), 'fecha' => date('Ymd'),
             'total' => $total, 'neto' => round($total / 1.21, 2), 'iva' => round($total - $total / 1.21, 2),

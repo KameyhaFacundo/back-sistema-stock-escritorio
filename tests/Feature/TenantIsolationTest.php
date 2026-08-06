@@ -2,11 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Models\Compra;
 use App\Models\Empresa;
 use App\Models\Factura;
 use App\Models\Permiso;
 use App\Models\PlantillaEtiqueta;
+use App\Models\Proveedor;
 use App\Models\User;
+use App\Models\Venta;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -43,6 +46,30 @@ class TenantIsolationTest extends TestCase
         $token = JWTAuth::fromUser($usuario);
 
         return [$usuario, $empresa, $token];
+    }
+
+    // Simula el caso documentado en HasTenant::bootHasTenant() — un usuario
+    // autenticado sin empresa asignada (típicamente un super-admin fuera de
+    // una impersonación). El global scope de HasTenant corta esto solo para
+    // queries Eloquent; los controllers que usan DB::table a mano (Deudas*)
+    // tienen que replicar el mismo "sin empresa = 0 filas" ellos mismos.
+    private function usuarioSinEmpresa(array $codigos): array
+    {
+        $usuario = User::create([
+            'des_usu'    => 'Super Admin Sin Empresa',
+            'email'      => 'sinempresa' . uniqid() . '@test.com',
+            'password'   => bcrypt('password'),
+            'empresa_id' => null,
+        ]);
+
+        if ($codigos) {
+            $ids = Permiso::whereIn('codigo', $codigos)->pluck('id');
+            $usuario->permisos()->attach($ids);
+        }
+
+        $token = JWTAuth::fromUser($usuario);
+
+        return [$usuario, $token];
     }
 
     private function usuarioDeOtraEmpresa(): User
@@ -174,9 +201,14 @@ class TenantIsolationTest extends TestCase
             'des_usu' => 'Dueño otra empresa', 'email' => 'dueno' . uniqid() . '@test.com',
             'password' => bcrypt('password'), 'empresa_id' => $otraEmpresa->id,
         ]);
+        $venta = Venta::create([
+            'empresa_id' => $otraEmpresa->id, 'id_usuario' => $otroUsuario->nro_usu,
+            'estado' => 'confirmada', 'fecha' => '2026-01-01', 'monto_total' => 1000,
+        ]);
         $factura = Factura::create([
             'empresa_id' => $otraEmpresa->id,
             'id_usuario' => $otroUsuario->nro_usu,
+            'id_venta' => $venta->id,
             'tipo_comprobante' => 6,
             'punto_venta' => 1,
             'numero' => 1,
@@ -191,5 +223,60 @@ class TenantIsolationTest extends TestCase
             ->getJson("/api/v1/facturas/{$factura->id}");
 
         $response->assertStatus(404);
+    }
+
+    // ── Deudas (DB::table a mano, sin HasTenant) ──────────────────────────
+    // Regresión: DeudasController y DeudasClientesController usaban
+    // ->when($empresaId, ...) para el filtro de empresa en sus queries
+    // DB::table — cuando $empresaId es null (usuario sin empresa), when()
+    // omite el filtro entero en vez de no matchear nada, y el total/resumen
+    // quedaba sumando la deuda de TODAS las empresas. Se corrigió a where()
+    // (empresa_id = null → 0 filas, ver HasTenant::bootHasTenant()).
+
+    public function test_usuario_sin_empresa_no_ve_deuda_de_clientes_de_otras_empresas(): void
+    {
+        $otraEmpresa = Empresa::create(['nombre' => 'Otra Empresa ' . uniqid(), 'tipo' => 'almacen', 'plan' => 'pro']);
+        $otroUsuario = User::create([
+            'des_usu' => 'Dueño otra empresa', 'email' => 'dueno' . uniqid() . '@test.com',
+            'password' => bcrypt('password'), 'empresa_id' => $otraEmpresa->id,
+        ]);
+        Venta::create([
+            'empresa_id' => $otraEmpresa->id, 'id_usuario' => $otroUsuario->nro_usu,
+            'estado' => 'confirmada', 'estado_pago' => 'pendiente',
+            'fecha' => '2026-01-01', 'monto_total' => 50000, 'monto_cobrado' => 0,
+        ]);
+        [, $token] = $this->usuarioSinEmpresa(['list-clientes']);
+
+        $index = $this->withHeaders(['Authorization' => "Bearer {$token}"])->getJson('/api/v1/deudas-clientes');
+        $index->assertOk();
+        $this->assertEquals(0, $index->json('total_deuda'), 'No debe ver la deuda de otra empresa');
+
+        $resumen = $this->withHeaders(['Authorization' => "Bearer {$token}"])->getJson('/api/v1/deudas-clientes/resumen');
+        $resumen->assertOk();
+        $this->assertCount(0, $resumen->json('data'), 'No debe listar clientes de otra empresa');
+    }
+
+    public function test_usuario_sin_empresa_no_ve_deuda_a_proveedores_de_otras_empresas(): void
+    {
+        $otraEmpresa = Empresa::create(['nombre' => 'Otra Empresa ' . uniqid(), 'tipo' => 'almacen', 'plan' => 'pro']);
+        $otroUsuario = User::create([
+            'des_usu' => 'Dueño otra empresa', 'email' => 'dueno' . uniqid() . '@test.com',
+            'password' => bcrypt('password'), 'empresa_id' => $otraEmpresa->id,
+        ]);
+        $proveedor = Proveedor::create(['empresa_id' => $otraEmpresa->id, 'persona' => 'Proveedor Ajeno']);
+        Compra::create([
+            'empresa_id' => $otraEmpresa->id, 'id_usuario' => $otroUsuario->nro_usu, 'id_proveedor' => $proveedor->id,
+            'estado' => 'confirmada', 'estado_deuda' => 'pendiente',
+            'fecha' => '2026-01-01', 'monto_total' => 30000, 'monto_pagado' => 0,
+        ]);
+        [, $token] = $this->usuarioSinEmpresa(['list-proveedores']);
+
+        $index = $this->withHeaders(['Authorization' => "Bearer {$token}"])->getJson('/api/v1/deudas');
+        $index->assertOk();
+        $this->assertEquals(0, $index->json('total_deuda'), 'No debe ver la deuda a proveedores de otra empresa');
+
+        $resumen = $this->withHeaders(['Authorization' => "Bearer {$token}"])->getJson('/api/v1/deudas/resumen');
+        $resumen->assertOk();
+        $this->assertCount(0, $resumen->json('data'), 'No debe listar proveedores de otra empresa');
     }
 }

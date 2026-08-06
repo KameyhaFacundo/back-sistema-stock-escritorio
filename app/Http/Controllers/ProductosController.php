@@ -86,7 +86,8 @@ class ProductosController extends Controller
         $empresaId  = auth()->user()->empresa_id;
         $idSucursal = $this->sucursalDeRequest($request);
         $version    = Cache::get("productos:list:version:{$empresaId}", 1);
-        $cacheKey   = "productos:list:{$empresaId}:v{$version}:" . md5(json_encode($request->only(['search', 'id_categoria', 'estado', 'per_page']) + ['id_sucursal' => $idSucursal]));
+        $paramsCacheables = ['search', 'id_categoria', 'estado', 'per_page', 'id_proveedor', 'stock_bajo', 'vencimiento_proximo', 'es_combo', 'tiene_variantes', 'codigo_exacto', 'sort', 'dir', 'page'];
+        $cacheKey   = "productos:list:{$empresaId}:v{$version}:" . md5(json_encode($request->only($paramsCacheables) + ['id_sucursal' => $idSucursal]));
 
         $productos = Cache::remember($cacheKey, 300, function () use ($request, $idSucursal) {
             $query = Producto::with([
@@ -105,15 +106,26 @@ class ProductosController extends Controller
                 ->withSum('stocks', 'stock')
                 ->withMax('historialPrecios as ultima_modificacion_precio', 'created_at');
 
-            if ($request->has('search') && $request->search) {
+            // codigo_exacto: 0-o-1 resultado por código/código de barras EXACTO —
+            // para el escaneo del POS y el resolver de import de Movimientos, que
+            // necesitan resolver un código real sin importar en qué página del
+            // catálogo (ordenado alfabéticamente) caería con un LIKE + paginate
+            // normal. Si viene, ignora "search" (son excluyentes).
+            if ($request->filled('codigo_exacto')) {
+                $codigo = $request->codigo_exacto;
+                $query->where(function ($q) use ($codigo) {
+                    $q->where('codigo', $codigo)->orWhere('codigo_barras', $codigo);
+                });
+            } elseif ($request->filled('search')) {
                 $search = $request->search;
                 $query->where(function ($q) use ($search) {
                     $q->where('producto', 'like', "%{$search}%")
-                      ->orWhere('codigo', 'like', "%{$search}%");
+                      ->orWhere('codigo', 'like', "%{$search}%")
+                      ->orWhere('codigo_barras', 'like', "%{$search}%");
                 });
             }
 
-            if ($request->has('id_categoria') && $request->id_categoria) {
+            if ($request->filled('id_categoria')) {
                 $query->where('id_categoria', $request->id_categoria);
             }
 
@@ -121,7 +133,45 @@ class ProductosController extends Controller
                 $query->where('estado', $request->estado);
             }
 
-            $paginado = $query->orderBy('producto')->paginate($request->per_page ?? 15);
+            if ($request->filled('id_proveedor')) {
+                $query->where('id_proveedor', $request->id_proveedor);
+            }
+
+            if ($request->boolean('stock_bajo')) {
+                $query->whereHas('stocks', fn($q) => $q->where('id_sucursal', $idSucursal)
+                    ->whereColumn('stock', '<=', 'stock_minimo'));
+            }
+
+            // Mismo umbral que usaba el filtro del lado del cliente (30 días).
+            if ($request->boolean('vencimiento_proximo')) {
+                $query->whereNotNull('fecha_vencimiento')
+                    ->whereDate('fecha_vencimiento', '<=', now()->addDays(30));
+            }
+
+            if ($request->has('es_combo')) {
+                $query->where('es_combo', $request->boolean('es_combo'));
+            }
+
+            // Para "Comprar por curva" en Compras.jsx — el dropdown solo debe
+            // ofrecer productos madre con talles (los únicos comprables por curva).
+            if ($request->has('tiene_variantes')) {
+                $query->where('tiene_variantes', $request->boolean('tiene_variantes'));
+            }
+
+            $sortable = ['nombre' => 'producto', 'precioFinal' => 'precio', 'reciente' => 'id'];
+            $sortCol  = $sortable[$request->sort] ?? null;
+            if ($sortCol) {
+                $query->orderBy($sortCol, $request->dir === 'desc' ? 'desc' : 'asc');
+            } elseif (in_array($request->sort, ['stock', 'stockTotal'], true)) {
+                // Aproximado: ordena por el total entre sucursales (stocks_sum_stock,
+                // ya viene del withSum de arriba), no por el stock de una sucursal
+                // puntual — alcanza para el uso real (ordenar por "más/menos stock").
+                $query->orderBy('stocks_sum_stock', $request->dir === 'desc' ? 'desc' : 'asc');
+            } else {
+                $query->orderBy('producto');
+            }
+
+            $paginado = $query->paginate($request->per_page ?? 15);
             $paginado->getCollection()->transform(fn($p) => $this->conStockDe($p, $idSucursal));
 
             return $paginado;
@@ -658,6 +708,7 @@ class ProductosController extends Controller
                 'id'      => $producto->id,
                 'nombre'  => $producto->producto,
                 'codigo'  => $producto->codigo ?? "PROD-{$producto->id}",
+                'codigoBarras' => $producto->codigo_barras ?? '',
                 'precio'  => (float) ($producto->precio ?? 0),
             ];
         });

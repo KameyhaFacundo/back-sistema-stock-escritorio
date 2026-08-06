@@ -18,6 +18,7 @@ use App\Services\TurnoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class ComprasController extends Controller
 {
@@ -522,5 +523,48 @@ class ComprasController extends Controller
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error al registrar la devolución', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * POST /compras/{id}/comprobante — sube (o reemplaza) la foto/PDF del
+     * ticket del proveedor. Se puede adjuntar al crear la compra o después,
+     * desde el detalle — mismo patrón que ProductosController::subirImagen.
+     */
+    public function subirComprobante(Request $request, $id): JsonResponse
+    {
+        $compra = Compra::findOrFail($id);
+
+        $request->validate([
+            'comprobante' => 'required|file|mimes:png,jpg,jpeg,webp,pdf|max:8192',
+        ]);
+
+        if ($compra->comprobante_path) {
+            Storage::disk('public')->delete($compra->comprobante_path);
+        }
+
+        $path = $request->file('comprobante')->store("compras/{$compra->empresa_id}", 'public');
+        $compra->update(['comprobante_path' => $path]);
+
+        // fresh() sin relaciones devuelve la compra "pelada" — el front usa esta
+        // respuesta para actualizar la fila en la lista (ver Compras.jsx
+        // handleRegistrar), y sin proveedor/usuario/lineas cargados, mapCompra()
+        // los reemplaza por sus fallback ("Sin proveedor", lineas vacías) hasta
+        // el próximo refresco. Mismo set de relaciones que index()/show()/store().
+        return response()->json(['success' => true, 'data' => $compra->fresh(['proveedor', 'usuario', 'usuarioAnulacion', 'lineas.producto.categoria', 'devoluciones.lineas'])]);
+    }
+
+    /**
+     * DELETE /compras/{id}/comprobante — quita el ticket adjunto.
+     */
+    public function eliminarComprobante($id): JsonResponse
+    {
+        $compra = Compra::findOrFail($id);
+
+        if ($compra->comprobante_path) {
+            Storage::disk('public')->delete($compra->comprobante_path);
+            $compra->update(['comprobante_path' => null]);
+        }
+
+        return response()->json(['success' => true, 'data' => $compra->fresh(['proveedor', 'usuario', 'usuarioAnulacion', 'lineas.producto.categoria', 'devoluciones.lineas'])]);
     }
 }

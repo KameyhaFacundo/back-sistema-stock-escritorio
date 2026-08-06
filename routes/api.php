@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CajaController;
 use App\Http\Controllers\EmpresaController;
+use App\Http\Controllers\SistemaController;
 use App\Http\Controllers\EtiquetaController;
 use App\Http\Controllers\GoogleAuthController;
 use App\Http\Controllers\InventarioController;
@@ -20,6 +21,7 @@ use App\Http\Controllers\RolesController;
 use App\Http\Controllers\SucursalesController;
 use App\Http\Controllers\UsersController;
 use App\Http\Controllers\VentasController;
+use App\Http\Controllers\PresupuestosController;
 // IA (Gemini) desactivada por ahora — descomentar junto con las rutas de
 // más abajo si se vuelve a activar (ver EscanearController/IaController/AsistenteController).
 // use App\Http\Controllers\EscanearController;
@@ -96,6 +98,7 @@ $apiRoutes = function () {
         });
 
         Route::get('dashboard/stats', [DashboardController::class, 'stats'])->middleware('permisos.verify:view-dashboard');
+        Route::get('dashboard/ranking-productos', [DashboardController::class, 'rankingProductos'])->middleware('permisos.verify:view-dashboard');
 
         // IA desactivada por ahora (ver nota en los imports, arriba) — descomentar
         // para reactivar sugerencias de precio/categoría y el asistente de IA.
@@ -203,6 +206,8 @@ $apiRoutes = function () {
                 // devolver-ventas: un cajero puede devolver mercadería sin
                 // poder cambiar el estado completo de una compra.
                 Route::post('{id}/devolucion',      [ComprasController::class, 'devolucion'])    ->middleware('permisos.verify:devolver-compras');
+                Route::post('{id}/comprobante',     [ComprasController::class, 'subirComprobante'])   ->middleware('permisos.verify:update-compras');
+                Route::delete('{id}/comprobante',   [ComprasController::class, 'eliminarComprobante']) ->middleware('permisos.verify:update-compras');
                 // IA desactivada por ahora (ver nota junto a los imports) — descomentar para reactivar.
                 // Route::post('escanear',             [EscanearController::class, 'factura'])      ->middleware('permisos.verify:create-compras');
             });
@@ -300,6 +305,7 @@ $apiRoutes = function () {
             Route::get('empresa/exportar-datos', [EmpresaController::class, 'exportarDatos'])->middleware('permisos.verify:update-configuracion');
             Route::get('empresa/catalogo', [CatalogoController::class, 'config'])->middleware('permisos.verify:view-configuracion');
             Route::put('empresa/catalogo', [CatalogoController::class, 'actualizar'])->middleware('permisos.verify:update-configuracion');
+            Route::get('sistema/lan-ip', [SistemaController::class, 'lanIp'])->middleware('permisos.verify:view-configuracion');
 
             Route::prefix('mercadopago')->group(function () {
                 Route::get('estado',         [MercadoPagoConexionController::class, 'estado'])           ->middleware('permisos.verify:update-configuracion');
@@ -333,6 +339,17 @@ $apiRoutes = function () {
                 Route::prefix('qr')->group(function () {
                     Route::post('crear-intento', [PagoPointController::class, 'crearIntentoQr']) ->middleware('permisos.verify:create-ventas');
                 });
+            });
+
+            Route::prefix('presupuestos')->group(function () {
+                Route::get('/',            [PresupuestosController::class, 'index'])     ->middleware('permisos.verify:list-presupuestos');
+                Route::get('{id}',         [PresupuestosController::class, 'show'])       ->middleware('permisos.verify:view-presupuestos');
+                Route::post('/',           [PresupuestosController::class, 'store'])      ->middleware('permisos.verify:create-presupuestos');
+                Route::put('{id}',         [PresupuestosController::class, 'update'])     ->middleware('permisos.verify:update-presupuestos');
+                Route::delete('{id}',      [PresupuestosController::class, 'destroy'])    ->middleware('permisos.verify:delete-presupuestos');
+                // Mismo permiso que crear una venta manual — convertir es, en la
+                // práctica, registrar la venta que el presupuesto ya tenía armada.
+                Route::post('{id}/convertir', [PresupuestosController::class, 'convertir'])->middleware('permisos.verify:create-ventas');
             });
 
     }); // jwt.verify

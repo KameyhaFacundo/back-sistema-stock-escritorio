@@ -73,6 +73,43 @@ class CajaControllerTest extends TestCase
         ]);
     }
 
+    public function test_movimiento_ingreso_efectivo_suma_al_efectivo_actual(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConCaja(['create-caja']);
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_usuario' => $usuario->nro_usu, 'estado' => 'abierta',
+            'fecha' => now()->format('Y-m-d'), 'hora_apertura' => '08:00',
+            'monto_inicial' => 1000, 'efectivo_actual' => 1000,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/caja/movimiento', ['tipo' => 'ingreso', 'monto' => 500]);
+
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('movimientos_caja', ['tipo' => 'ingreso', 'metodo' => 'efectivo', 'monto' => 500]);
+        $this->assertDatabaseHas('turnos', ['id_usuario' => $usuario->nro_usu, 'efectivo_actual' => 1500]);
+    }
+
+    public function test_movimiento_transferencia_no_toca_el_efectivo_actual(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConCaja(['create-caja']);
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_usuario' => $usuario->nro_usu, 'estado' => 'abierta',
+            'fecha' => now()->format('Y-m-d'), 'hora_apertura' => '08:00',
+            'monto_inicial' => 1000, 'efectivo_actual' => 1000,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/caja/movimiento', ['tipo' => 'ingreso', 'metodo' => 'transferencia', 'monto' => 500]);
+
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('movimientos_caja', ['tipo' => 'ingreso', 'metodo' => 'transferencia', 'monto' => 500]);
+        // El efectivo físico queda igual — una transferencia no es plata en la caja.
+        $this->assertDatabaseHas('turnos', ['id_usuario' => $usuario->nro_usu, 'efectivo_actual' => 1000]);
+    }
+
     public function test_abrir_cierra_turno_previo_abierto_del_mismo_usuario(): void
     {
         [$usuario, $empresa, $sucursal, $token] = $this->usuarioConCaja(['create-caja']);

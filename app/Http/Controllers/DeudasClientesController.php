@@ -38,10 +38,12 @@ class DeudasClientesController extends Controller
         $deudas = $query->paginate($request->per_page ?? 50);
 
         // DB::table (no el modelo Venta) para no depender de que ningún alias
-        // futuro choque con un accessor de Venta (ver resumen()).
+        // futuro choque con un accessor de Venta (ver resumen()). where() (no
+        // when()) a propósito: un $empresaIdTotal null tiene que dar 0, no
+        // saltarse el filtro y sumar la deuda de TODAS las empresas.
         $empresaIdTotal = auth('api')->user()?->empresa_id;
         $totalDeuda = DB::table('ventas')
-            ->when($empresaIdTotal, fn($q) => $q->where('empresa_id', $empresaIdTotal))
+            ->where('empresa_id', $empresaIdTotal)
             ->whereIn('estado_pago', ['pendiente', 'parcial'])
             ->where('estado', '!=', 'cancelada')
             ->whereNull('deleted_at')
@@ -58,11 +60,13 @@ class DeudasClientesController extends Controller
     // GET /deudas-clientes/resumen
     public function resumen(): JsonResponse
     {
+        // where() (no when()): un $empresaId null tiene que dar 0 filas, no
+        // saltarse el filtro y agregar la deuda de TODAS las empresas.
         $empresaId = auth('api')->user()?->empresa_id;
 
         $resumen = DB::table('ventas')
             ->join('clientes', 'ventas.id_cliente', '=', 'clientes.id')
-            ->when($empresaId, fn($q) => $q->where('ventas.empresa_id', $empresaId))
+            ->where('ventas.empresa_id', $empresaId)
             ->whereIn('ventas.estado_pago', ['pendiente', 'parcial'])
             ->where('ventas.estado', '!=', 'cancelada')
             ->whereNull('ventas.deleted_at')
