@@ -17,6 +17,7 @@ class CreateVentaRequest extends FormRequest
         return [
             'numero_ticket'        => 'nullable|string|max:50',
             'id_cliente'           => 'nullable|exists:clientes,id',
+            'id_presupuesto'       => 'nullable|exists:presupuestos,id',
             'fecha'                => 'required|date',
             'hora'                 => 'nullable|string|max:20',
             'metodo_pago'          => 'nullable|string|max:50',

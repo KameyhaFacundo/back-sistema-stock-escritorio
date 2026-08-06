@@ -8,6 +8,7 @@ use App\Http\Requests\CreateDevolucionVentaRequest;
 use App\Http\Requests\UpdateVentaRequest;
 use App\Models\Venta;
 use App\Models\DevolucionVentaLinea;
+use App\Models\Presupuesto;
 use App\Models\Producto;
 use App\Models\Cliente;
 use App\Models\Turno;
@@ -115,6 +116,21 @@ class VentasController extends Controller
                 'ajuste'        => $request->ajuste,
                 'puntos_canjeados' => $request->puntos_canjeados,
             ], auth()->user()->empresa_id, $turnoActivo->id);
+
+            // Viene del botón "Convertir en venta" de Presupuestos.jsx, que manda
+            // al POS con el carrito ya armado en vez de crear la venta directo por
+            // API — recién acá, con la venta ya confirmada por el cajero, se marca
+            // el presupuesto como convertido y se lo vincula. find() (no findOrFail)
+            // a propósito: si el presupuesto ya no es válido (otro cajero lo
+            // convirtió mientras tanto, o fue eliminado) la venta igual se registra,
+            // simplemente sin el vínculo — no tiene sentido perder una venta real
+            // por un dato que es solo de trazabilidad.
+            if ($request->filled('id_presupuesto')) {
+                $presupuesto = Presupuesto::find($request->id_presupuesto);
+                if ($presupuesto && $presupuesto->estado === 'vigente') {
+                    $presupuesto->update(['estado' => 'convertido', 'id_venta' => $venta->id]);
+                }
+            }
 
             DB::commit();
             DashboardController::invalidarCache(auth()->user()->empresa_id);

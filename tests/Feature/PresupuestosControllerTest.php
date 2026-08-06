@@ -155,4 +155,77 @@ class PresupuestosControllerTest extends TestCase
         $response->assertStatus(422);
         $this->assertDatabaseHas('presupuestos', ['id' => $idPresupuesto, 'estado' => 'vigente']);
     }
+
+    // Presupuestos.jsx ya no llama a /convertir directo — manda al POS con el
+    // carrito armado (ver Home.jsx) y es la venta creada ahí, con
+    // id_presupuesto en el payload, la que vincula y marca el presupuesto.
+    public function test_confirmar_venta_del_pos_con_id_presupuesto_marca_el_presupuesto_convertido(): void
+    {
+        // aplicar-descuento-ventas: el presupuesto cotiza $120 pero el producto
+        // en catálogo vale $100 — sin este permiso, VentasController::store()
+        // rechaza cualquier línea que no coincida con el precio de lista (ver
+        // ValidaPreciosLinea), sea la venta manual o venga de un presupuesto.
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['create-presupuestos', 'create-ventas', 'aplicar-descuento-ventas']);
+        $producto = $this->crearProductoConStock($empresa, $sucursal, 10);
+
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'monto_inicial' => 0, 'fecha' => now()->format('Y-m-d'), 'hora_apertura' => now()->format('H:i'),
+        ]);
+
+        $crear = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/presupuestos', [
+                'fecha'  => now()->format('Y-m-d'),
+                'lineas' => [['id_producto' => $producto->id, 'precio_venta' => 120, 'cantidad' => 3]],
+            ]);
+        $idPresupuesto = $crear->json('data.id');
+
+        $venta = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/ventas', [
+                'id_presupuesto' => $idPresupuesto,
+                'fecha'          => now()->format('Y-m-d'),
+                'metodo_pago'    => 'efectivo',
+                'lineas'         => [['id_producto' => $producto->id, 'precio_venta' => 120, 'cantidad' => 3]],
+            ]);
+
+        $venta->assertStatus(201);
+        $idVenta = $venta->json('data.id');
+
+        $this->assertDatabaseHas('presupuestos', ['id' => $idPresupuesto, 'estado' => 'convertido', 'id_venta' => $idVenta]);
+    }
+
+    // Un id_presupuesto que ya no sirve (convertido por otro cajero, borrado,
+    // de otra empresa) no puede tirar abajo una venta real — se ignora el
+    // vínculo y la venta se registra igual.
+    public function test_confirmar_venta_con_id_presupuesto_invalido_no_impide_la_venta(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['create-presupuestos', 'create-ventas', 'aplicar-descuento-ventas']);
+        $producto = $this->crearProductoConStock($empresa, $sucursal, 10);
+
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'monto_inicial' => 0, 'fecha' => now()->format('Y-m-d'), 'hora_apertura' => now()->format('H:i'),
+        ]);
+
+        $crear = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/presupuestos', [
+                'fecha'  => now()->format('Y-m-d'),
+                'lineas' => [['id_producto' => $producto->id, 'precio_venta' => 120, 'cantidad' => 1]],
+            ]);
+        $idPresupuesto = $crear->json('data.id');
+
+        $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson("/api/v1/presupuestos/{$idPresupuesto}/convertir")
+            ->assertStatus(200);
+
+        $venta = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/ventas', [
+                'id_presupuesto' => $idPresupuesto,
+                'fecha'          => now()->format('Y-m-d'),
+                'metodo_pago'    => 'efectivo',
+                'lineas'         => [['id_producto' => $producto->id, 'precio_venta' => 120, 'cantidad' => 1]],
+            ]);
+
+        $venta->assertStatus(201);
+    }
 }
