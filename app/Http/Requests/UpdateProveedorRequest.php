@@ -21,6 +21,7 @@ class UpdateProveedorRequest extends FormRequest
                 'max:20',
                 Rule::unique('proveedores', 'cuit')->ignore($this->route('id')),
             ],
+            'codigo' => 'nullable|string|max:100',
             'persona' => 'sometimes|string|max:255',
             'direccion' => 'nullable|string|max:500',
             'telefono' => 'nullable|string|max:50',

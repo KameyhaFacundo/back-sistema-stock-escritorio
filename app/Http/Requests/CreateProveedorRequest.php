@@ -26,6 +26,7 @@ class CreateProveedorRequest extends FormRequest
     {
         return [
             'cuit' => ['nullable', 'string', 'max:20', Rule::unique('proveedores', 'cuit')],
+            'codigo' => 'nullable|string|max:100',
             'persona' => 'required|string|max:255',
             'direccion' => 'nullable|string|max:500',
             'telefono' => 'nullable|string|max:50',

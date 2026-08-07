@@ -57,4 +57,21 @@ class ProveedoresControllerTest extends TestCase
 
         $response->assertStatus(201);
     }
+
+    // El código es una referencia libre a cargo del usuario (a diferencia
+    // del código de Productos), no un identificador único — dos proveedores
+    // distintos tienen que poder compartir el mismo.
+    public function test_store_permite_repetir_el_mismo_codigo_entre_proveedores(): void
+    {
+        [, , $token] = $this->usuarioConPermisos(['create-proveedores']);
+
+        $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/proveedores', ['persona' => 'Proveedor A', 'codigo' => 'AA223']);
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/proveedores', ['persona' => 'Proveedor B', 'codigo' => 'AA223']);
+
+        $response->assertStatus(201);
+        $this->assertDatabaseHas('proveedores', ['persona' => 'Proveedor A', 'codigo' => 'AA223']);
+        $this->assertDatabaseHas('proveedores', ['persona' => 'Proveedor B', 'codigo' => 'AA223']);
+    }
 }
