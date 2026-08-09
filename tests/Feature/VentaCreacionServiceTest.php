@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Models\Categoria;
+use App\Models\Empresa;
 use App\Models\Lote;
 use App\Models\MovimientoStock;
 use App\Models\Producto;
@@ -18,6 +20,13 @@ use Tests\TestCase;
  * que consuma stock correctamente y respete el orden FEFO de los lotes
  * (se rompió una vez ya: las ventas descontaban producto_stock.stock
  * directo sin tocar `lotes`, ver VentaCreacionService::crear()).
+ *
+ * armarEscenario() arma su propia Empresa/Producto/Usuario en vez de
+ * buscar filas ya existentes (antes: `firstOrFail()`) — en una base recién
+ * migrada/seedeada (el caso real de una instalación nueva, sin ningún
+ * producto todavía) esto tiraba ModelNotFoundException. Solo "funcionaba"
+ * antes por datos sueltos que habían quedado de pruebas manuales
+ * anteriores en esa base puntual.
  */
 class VentaCreacionServiceTest extends TestCase
 {
@@ -25,9 +34,17 @@ class VentaCreacionServiceTest extends TestCase
 
     private function armarEscenario(): array
     {
-        $producto = Producto::where('es_combo', false)->firstOrFail();
-        $usuario  = User::where('empresa_id', $producto->empresa_id)->whereNotNull('id_sucursal')->firstOrFail();
-        $sucursal = Sucursal::findOrFail($usuario->id_sucursal);
+        $empresa = Empresa::create(['nombre' => 'Test VentaCreacion ' . uniqid(), 'tipo' => 'almacen', 'plan' => 'pro']);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $sucursal = Sucursal::create(['empresa_id' => $empresa->id, 'nombre' => 'Casa Central']);
+        $producto = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto de prueba',
+            'precio' => 100, 'costo' => 50, 'id_categoria' => $categoria->id,
+        ]);
+        $usuario = User::create([
+            'des_usu' => 'Usuario Test', 'email' => 'test' . uniqid() . '@test.com',
+            'password' => bcrypt('password'), 'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+        ]);
 
         ProductoStock::updateOrCreate(
             ['id_producto' => $producto->id, 'id_sucursal' => $sucursal->id],

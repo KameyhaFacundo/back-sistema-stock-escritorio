@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Categoria;
 use App\Models\Empresa;
 use App\Models\Lote;
 use App\Models\Producto;
@@ -15,6 +16,13 @@ use Tests\TestCase;
  * Cubre el punto de escritura único de stock (StockService) — se prueba
  * contra la base real dentro de una transacción (DatabaseTransactions),
  * así que cada test corre y se revierte solo sin dejar datos de prueba.
+ *
+ * producto()/sucursal() arman su propia Empresa/Categoria/Producto en vez
+ * de buscar una fila cualquiera ya existente (antes: `firstOrFail()`) —
+ * en una base recién migrada/seedeada (sin ningún producto todavía, el
+ * caso real de una instalación nueva) esos cuatro tests tiraban
+ * ModelNotFoundException. Solo "funcionaban" antes por datos sueltos que
+ * habían quedado de pruebas manuales anteriores en esa base puntual.
  */
 class StockServiceTest extends TestCase
 {
@@ -22,12 +30,18 @@ class StockServiceTest extends TestCase
 
     private function producto(): Producto
     {
-        return Producto::where('es_combo', false)->firstOrFail();
+        $empresa = Empresa::create(['nombre' => 'Test Stock ' . uniqid(), 'tipo' => 'almacen', 'plan' => 'pro']);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+
+        return Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto de prueba',
+            'precio' => 100, 'costo' => 50, 'id_categoria' => $categoria->id,
+        ]);
     }
 
     private function sucursal(Producto $producto): Sucursal
     {
-        return Sucursal::where('empresa_id', $producto->empresa_id)->firstOrFail();
+        return Sucursal::create(['empresa_id' => $producto->empresa_id, 'nombre' => 'Casa Central']);
     }
 
     public function test_restar_lanza_excepcion_si_no_hay_stock_suficiente(): void
@@ -107,7 +121,10 @@ class StockServiceTest extends TestCase
         Lote::where('id_producto', $producto->id)->where('id_sucursal', $origen->id)->delete();
         Lote::create(['empresa_id' => $producto->empresa_id, 'id_producto' => $producto->id, 'id_sucursal' => $origen->id, 'cantidad' => 10]);
 
-        $usuario = \App\Models\User::where('empresa_id', $producto->empresa_id)->firstOrFail();
+        $usuario = \App\Models\User::create([
+            'des_usu' => 'Usuario Test', 'email' => 'test' . uniqid() . '@test.com',
+            'password' => bcrypt('password'), 'empresa_id' => $producto->empresa_id, 'id_sucursal' => $origen->id,
+        ]);
         $resultado = $service->transferir($producto, $origen->id, $destino->id, 4, $usuario->nro_usu);
 
         $this->assertEquals('transferencia_salida', $resultado['salida']->tipo);
