@@ -186,6 +186,7 @@ class PresupuestosControllerTest extends TestCase
                 'fecha'          => now()->format('Y-m-d'),
                 'metodo_pago'    => 'efectivo',
                 'lineas'         => [['id_producto' => $producto->id, 'precio_venta' => 120, 'cantidad' => 3]],
+                'motivo_descuento' => 'Precio cotizado en el presupuesto',
             ]);
 
         $venta->assertStatus(201);
@@ -224,6 +225,7 @@ class PresupuestosControllerTest extends TestCase
                 'fecha'          => now()->format('Y-m-d'),
                 'metodo_pago'    => 'efectivo',
                 'lineas'         => [['id_producto' => $producto->id, 'precio_venta' => 120, 'cantidad' => 1]],
+                'motivo_descuento' => 'Precio cotizado en el presupuesto',
             ]);
 
         $venta->assertStatus(201);

@@ -31,9 +31,17 @@ trait ValidaPreciosLinea
         $precios = Producto::where('empresa_id', $empresaId)->whereIn('id', $ids)->pluck('precio', 'id');
 
         foreach ($lineas as $linea) {
-            // Línea de "monto libre" (sin id_producto): no hay precio de lista
-            // contra el cual comparar, el monto es libre por diseño.
-            if (empty($linea['id_producto'])) continue;
+            // Línea de "monto libre" (sin id_producto, ver handleAgregarMonto en
+            // Home.jsx): no hay precio de lista contra el cual comparar, pero es
+            // el mismo vector de fraude que un precio manipulado — un producto
+            // real se puede entregar y cobrar como un monto suelto sin dejar
+            // ningún rastro de qué salió de verdad. Requiere el mismo permiso.
+            if (empty($linea['id_producto'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No tenés permiso para cargar un monto libre',
+                ], 403);
+            }
 
             $precioReal   = (float) ($precios[$linea['id_producto']] ?? 0);
             $precioPedido = (float) ($linea['precio_venta'] ?? 0);
@@ -46,5 +54,28 @@ trait ValidaPreciosLinea
         }
 
         return null;
+    }
+
+    /**
+     * A diferencia de precioLineasSinPermiso() de arriba, esto NO se salta
+     * aunque el usuario tenga permiso — sirve para saber si hay que exigir
+     * un motivo (ver VentasController::store()), no para bloquear nada. Un
+     * cajero autorizado a descontar igual tiene que dejar por escrito POR
+     * QUÉ lo hizo en cada venta puntual, no alcanza con tener el permiso.
+     */
+    protected function hayDescuentoEnLineas(array $lineas, int $empresaId): bool
+    {
+        $ids = collect($lineas)->pluck('id_producto')->filter()->unique();
+        $precios = Producto::where('empresa_id', $empresaId)->whereIn('id', $ids)->pluck('precio', 'id');
+
+        foreach ($lineas as $linea) {
+            if (empty($linea['id_producto'])) return true; // monto libre
+
+            $precioReal   = (float) ($precios[$linea['id_producto']] ?? 0);
+            $precioPedido = (float) ($linea['precio_venta'] ?? 0);
+            if (abs($precioPedido - $precioReal) > 0.01) return true;
+        }
+
+        return false;
     }
 }

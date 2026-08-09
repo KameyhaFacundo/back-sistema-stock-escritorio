@@ -35,6 +35,7 @@ class CreateVentaRequest extends FormRequest
             'ajuste.calculo'       => 'nullable|in:porcentaje,monto',
             'ajuste.valor'         => 'nullable|numeric|min:0',
             'puntos_canjeados'     => 'nullable|integer|min:0',
+            'motivo_descuento'     => 'nullable|string|max:255',
         ];
     }
 

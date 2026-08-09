@@ -17,7 +17,7 @@ class Venta extends Model
         'empresa_id', 'id_sucursal',
         'numero_ticket', 'id_turno', 'id_cliente', 'id_usuario',
         'estado', 'fecha', 'hora', 'metodo_pago',
-        'estado_pago', 'monto_cobrado', 'monto_total', 'cuit',
+        'estado_pago', 'monto_cobrado', 'monto_total', 'cuit', 'motivo_descuento',
     ];
 
     protected $casts = [

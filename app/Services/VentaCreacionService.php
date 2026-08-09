@@ -180,6 +180,7 @@ class VentaCreacionService
             'monto_cobrado' => $montoCobrado,
             'monto_total'   => $montoTotal,
             'cuit'          => $cliente?->cuit,
+            'motivo_descuento' => $datos['motivo_descuento'] ?? null,
         ]);
 
         // numero_ticket es un código interno generado offline (ver Home.jsx::

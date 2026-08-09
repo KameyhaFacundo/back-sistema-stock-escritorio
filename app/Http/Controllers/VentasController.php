@@ -101,6 +101,18 @@ class VentasController extends Controller
             return $resp;
         }
 
+        // Que un cajero PUEDA descontar no significa que no tenga que dejar
+        // por qué — sin esto, el permiso por sí solo no deja ningún rastro de
+        // a quién y por qué motivo se le vendió por debajo de lista.
+        $hayRecargo = !empty($ajuste) && ($ajuste['tipo'] ?? '') === 'recargo' && (float) ($ajuste['valor'] ?? 0) > 0;
+        $requiereMotivo = $esDescuento || $hayRecargo || $this->hayDescuentoEnLineas($request->lineas, auth()->user()->empresa_id);
+        if ($requiereMotivo && empty(trim((string) $request->motivo_descuento))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Escribí el motivo del descuento o recargo antes de confirmar',
+            ], 422);
+        }
+
         DB::beginTransaction();
 
         try {
@@ -115,6 +127,7 @@ class VentasController extends Controller
                 'lineas'        => $request->lineas,
                 'ajuste'        => $request->ajuste,
                 'puntos_canjeados' => $request->puntos_canjeados,
+                'motivo_descuento' => $request->motivo_descuento,
             ], auth()->user()->empresa_id, $turnoActivo->id);
 
             // Viene del botón "Convertir en venta" de Presupuestos.jsx, que manda
