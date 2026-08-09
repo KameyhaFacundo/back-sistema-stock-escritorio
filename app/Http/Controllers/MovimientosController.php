@@ -51,10 +51,26 @@ class MovimientosController extends Controller
             'tipo'        => 'required|in:venta,compra,ajuste',
             'sub_tipo'    => 'nullable|string|max:255',
             'cantidad'    => ['required', 'numeric', new CantidadValidaParaProducto()],
+            // Obligatoria solo para 'ajuste' (ver abajo, con mensaje propio) — un
+            // ajuste manual sin motivo es la tapadera perfecta para un faltante:
+            // "cantidad" ya justifica el número, pero nada explica el POR QUÉ.
+            // Este mismo endpoint también sirve para registrar movimientos de
+            // venta/compra ya justificados por su propio origen, ahí sigue opcional.
             'nota'        => 'nullable|string|max:500',
             'fecha'       => 'required|date',
             'hora'        => 'nullable|string|max:10',
         ]);
+
+        // Solo para bajas: un ajuste que RESTA stock sin motivo es la tapadera
+        // perfecta para un faltante. Una suba no oculta nada — el front ya la
+        // deja libre y opcional (ver MOTIVOS_BAJA en Movimientos.jsx), así que
+        // exigirlo ahí también sería fricción sin ningún beneficio real.
+        if ($validated['tipo'] === 'ajuste' && (float) $validated['cantidad'] < 0 && empty(trim((string) ($validated['nota'] ?? '')))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Escribí el motivo del ajuste antes de guardarlo',
+            ], 422);
+        }
 
         $idSucursal = auth()->user()?->id_sucursal;
         if (!$idSucursal) {

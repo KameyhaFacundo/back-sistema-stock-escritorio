@@ -68,7 +68,12 @@ class RolSeeder extends Seeder
             'create-compras',
             'update-compras',
             'change-status-compras',
-            'devolver-compras',
+            // devolver-compras queda afuera a propósito: una devolución de
+            // compra baja el stock de forma "legítima" — es la tapadera
+            // perfecta para encubrir un robo (el producto se lo queda el
+            // empleado y el conteo cierra igual). Mismo criterio que
+            // anular-ventas/aplicar-descuento-ventas, ya reservados para
+            // gerente/admin.
             // Productos (solo lectura)
             'list-productos',
             'view-productos',
