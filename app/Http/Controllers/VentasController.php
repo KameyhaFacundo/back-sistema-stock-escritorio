@@ -128,6 +128,7 @@ class VentasController extends Controller
                 'fecha'         => $request->fecha,
                 'hora'          => $request->hora,
                 'metodo_pago'   => $request->metodo_pago,
+                'pagos'         => $request->pagos,
                 'lineas'        => $request->lineas,
                 'ajuste'        => $request->ajuste,
                 'puntos_canjeados' => $request->puntos_canjeados,

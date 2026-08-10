@@ -7,6 +7,7 @@ use App\Models\Permiso;
 use App\Models\Sucursal;
 use App\Models\Turno;
 use App\Models\User;
+use App\Models\Venta;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -148,6 +149,46 @@ class CajaControllerTest extends TestCase
         $response->assertJsonPath('data.monto_inicial', null);
         $response->assertJsonPath('data.efectivo_actual', null);
         $response->assertJsonPath('data.ventas_efectivo', null);
+    }
+
+    // El resumen de Caja (ver TabResumen en Caja.jsx) muestra ventas_tarjeta/
+    // ventas_transferencia/ventas_qr/ventas_fiado, calculadas al vuelo sumando
+    // las ventas del turno por metodo_pago (agregarTotalesPorMetodo). Esto
+    // prueba que una venta con cada método aparece sumada en el lugar correcto.
+    public function test_turno_activo_suma_ventas_por_metodo_de_pago(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConCaja(['list-caja', 'create-caja', 'ver-montos-caja']);
+        $turno = Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_usuario' => $usuario->nro_usu, 'estado' => 'abierta',
+            'fecha' => now()->format('Y-m-d'), 'hora_apertura' => '08:00',
+            'monto_inicial' => 0, 'efectivo_actual' => 0,
+        ]);
+
+        foreach (['tarjeta' => 1000, 'transferencia' => 2000, 'qr' => 3000, 'fiado' => 4000] as $metodo => $monto) {
+            Venta::create([
+                'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+                'id_turno' => $turno->id, 'id_usuario' => $usuario->nro_usu,
+                'estado' => 'confirmada', 'fecha' => now()->format('Y-m-d'), 'hora' => '10:00',
+                'metodo_pago' => $metodo, 'monto_total' => $monto,
+            ]);
+        }
+        // Anulada: no debe sumar (ver el where('estado', '!=', 'cancelada') en agregarTotalesPorMetodo).
+        Venta::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_turno' => $turno->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'cancelada', 'fecha' => now()->format('Y-m-d'), 'hora' => '10:05',
+            'metodo_pago' => 'tarjeta', 'monto_total' => 9999,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/caja/turno-activo');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.ventas_tarjeta', 1000);
+        $response->assertJsonPath('data.ventas_transferencia', 2000);
+        $response->assertJsonPath('data.ventas_qr', 3000);
+        $response->assertJsonPath('data.ventas_fiado', 4000);
     }
 
     public function test_turno_activo_con_ver_montos_caja_muestra_los_montos(): void

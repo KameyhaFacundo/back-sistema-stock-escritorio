@@ -169,6 +169,7 @@ class VentaCreacionService
         }
 
         $metodoPago   = $datos['metodo_pago'] ?? 'efectivo';
+        $pagos        = $datos['pagos'] ?? null;
         $esFiado      = $metodoPago === 'fiado';
         $estadoPago   = $esFiado ? 'pendiente' : 'pagado';
         $montoCobrado = $esFiado ? 0 : $montoTotal;
@@ -243,9 +244,21 @@ class VentaCreacionService
             ]);
         }
 
-        if (!$esFiado && $metodoPago === 'efectivo' && $turnoActivo) {
-            $turnoActivo->efectivo_actual += $montoTotal;
-            $turnoActivo->ventas_efectivo += $montoTotal;
+        // Con pago dividido (ver variosPagos en Home.jsx), metodo_pago de la
+        // venta solo guarda el PRIMER método cargado — usar eso acá adentro
+        // metería TODO el monto o NADA en el arqueo según qué método haya
+        // quedado primero, aunque una parte real sea efectivo físico en el
+        // cajón. 'pagos' (si vino) trae el desglose real; solo la porción en
+        // efectivo entra al arqueo, sea pago único o parte de uno dividido —
+        // tarjeta/transferencia/qr no tocan plata física (mismo criterio que
+        // agregarMovimiento en CajaController).
+        $montoEfectivo = $pagos !== null
+            ? collect($pagos)->where('metodo', 'efectivo')->sum('monto')
+            : ($metodoPago === 'efectivo' ? $montoTotal : 0);
+
+        if (!$esFiado && $montoEfectivo > 0 && $turnoActivo) {
+            $turnoActivo->efectivo_actual += $montoEfectivo;
+            $turnoActivo->ventas_efectivo += $montoEfectivo;
             $turnoActivo->save();
         }
 

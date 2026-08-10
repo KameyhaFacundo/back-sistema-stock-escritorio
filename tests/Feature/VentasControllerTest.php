@@ -224,4 +224,46 @@ class VentasControllerTest extends TestCase
         $response->assertStatus(200);
         $this->assertEquals(10, ProductoStock::where('id_producto', $producto->id)->value('stock'));
     }
+
+    // Home.jsx (variosPagos) manda 'metodo' = el método del PRIMER pago y un
+    // array 'pagos' con el desglose real. metodo_pago de la venta por sí solo
+    // no alcanza para saber cuánto de una venta dividida es efectivo físico
+    // — solo la porción marcada "efectivo" en 'pagos' tiene que sumar al
+    // arqueo, sin importar qué método haya quedado primero.
+    public function test_pago_dividido_solo_la_porcion_efectivo_entra_al_arqueo(): void
+    {
+        [$producto, $headers] = $this->armarEscenario(['create-ventas']);
+
+        $this->withHeaders($headers)->postJson('/api/v1/ventas', [
+            'fecha' => now()->format('Y-m-d'),
+            // El primer pago cargado fue tarjeta, aunque la mitad de la venta
+            // se haya cobrado en efectivo — antes esto hacía que la parte en
+            // efectivo se perdiera del arqueo por completo.
+            'metodo_pago' => 'tarjeta',
+            'pagos' => [
+                ['metodo' => 'tarjeta', 'monto' => 2500],
+                ['metodo' => 'efectivo', 'monto' => 2500],
+            ],
+            'lineas' => [['id_producto' => $producto->id, 'cantidad' => 5, 'precio_venta' => (float) $producto->precio]],
+        ])->assertStatus(201);
+
+        $this->assertDatabaseHas('turnos', ['ventas_efectivo' => 2500, 'efectivo_actual' => 2500]);
+    }
+
+    public function test_pago_dividido_sin_ninguna_parte_en_efectivo_no_toca_el_arqueo(): void
+    {
+        [$producto, $headers] = $this->armarEscenario(['create-ventas']);
+
+        $this->withHeaders($headers)->postJson('/api/v1/ventas', [
+            'fecha' => now()->format('Y-m-d'),
+            'metodo_pago' => 'tarjeta',
+            'pagos' => [
+                ['metodo' => 'tarjeta', 'monto' => 2500],
+                ['metodo' => 'transferencia', 'monto' => 2500],
+            ],
+            'lineas' => [['id_producto' => $producto->id, 'cantidad' => 5, 'precio_venta' => (float) $producto->precio]],
+        ])->assertStatus(201);
+
+        $this->assertDatabaseHas('turnos', ['ventas_efectivo' => 0, 'efectivo_actual' => 0]);
+    }
 }
