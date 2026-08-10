@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Empresa;
+use App\Models\PagoVenta;
 use App\Models\Permiso;
 use App\Models\Sucursal;
 use App\Models\Turno;
@@ -189,6 +190,40 @@ class CajaControllerTest extends TestCase
         $response->assertJsonPath('data.ventas_transferencia', 2000);
         $response->assertJsonPath('data.ventas_qr', 3000);
         $response->assertJsonPath('data.ventas_fiado', 4000);
+    }
+
+    // Una venta con "varios métodos" solo guarda metodo_pago = el PRIMERO
+    // cargado — sin leer pagos_venta, esto le atribuiría el total ENTERO de
+    // la venta dividida a ese único método (mismo bug que ya se arregló para
+    // efectivo_actual). El desglose real tiene que repartirse bien acá.
+    public function test_turno_activo_reparte_venta_dividida_por_cada_metodo_real(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConCaja(['list-caja', 'create-caja', 'ver-montos-caja']);
+        $turno = Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_usuario' => $usuario->nro_usu, 'estado' => 'abierta',
+            'fecha' => now()->format('Y-m-d'), 'hora_apertura' => '08:00',
+            'monto_inicial' => 0, 'efectivo_actual' => 0,
+        ]);
+
+        $venta = Venta::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_turno' => $turno->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'confirmada', 'fecha' => now()->format('Y-m-d'), 'hora' => '10:00',
+            // El primer pago cargado fue tarjeta — sin el fix, TODO el
+            // monto_total ($5000) se le atribuiría a "tarjeta" en el resumen.
+            'metodo_pago' => 'tarjeta', 'monto_total' => 5000,
+        ]);
+        PagoVenta::create(['id_venta' => $venta->id, 'metodo' => 'tarjeta', 'monto' => 2000]);
+        PagoVenta::create(['id_venta' => $venta->id, 'metodo' => 'qr', 'monto' => 3000]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/caja/turno-activo');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.ventas_tarjeta', 2000);
+        $response->assertJsonPath('data.ventas_qr', 3000);
+        $response->assertJsonPath('data.ventas_transferencia', 0);
     }
 
     public function test_turno_activo_con_ver_montos_caja_muestra_los_montos(): void

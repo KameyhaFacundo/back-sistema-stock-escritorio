@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Turno;
 use App\Models\MovimientoCaja;
+use App\Models\PagoVenta;
 use App\Models\Venta;
 use App\Services\TurnoService;
 use Illuminate\Http\JsonResponse;
@@ -67,16 +68,32 @@ class CajaController extends Controller
     {
         if (!$turno) return $turno;
 
-        $sums = Venta::where('id_turno', $turno->id)
-            ->where('estado', '!=', 'cancelada')
+        $idsVentas = Venta::where('id_turno', $turno->id)->where('estado', '!=', 'cancelada')->pluck('id');
+
+        // Ventas con "varios métodos" (ver variosPagos en Home.jsx) tienen filas
+        // en pagos_venta con el desglose real — metodo_pago de la venta solo
+        // guarda el PRIMERO, así que sumarla por ahí le atribuiría el total
+        // entero a un solo método (mismo bug que ya se arregló para efectivo_
+        // actual, ver VentaCreacionService/VentasController::anular).
+        $idsConDesglose = PagoVenta::whereIn('id_venta', $idsVentas)->pluck('id_venta')->unique();
+
+        $sumsSinDesglose = Venta::whereIn('id', $idsVentas)
+            ->whereNotIn('id', $idsConDesglose)
             ->selectRaw('metodo_pago, SUM(monto_total) as total')
             ->groupBy('metodo_pago')
             ->pluck('total', 'metodo_pago');
 
-        $turno->setAttribute('ventas_tarjeta', (float) ($sums['tarjeta'] ?? 0));
-        $turno->setAttribute('ventas_transferencia', (float) ($sums['transferencia'] ?? 0));
-        $turno->setAttribute('ventas_qr', (float) ($sums['qr'] ?? 0));
-        $turno->setAttribute('ventas_fiado', (float) ($sums['fiado'] ?? 0));
+        $sumsDesglose = PagoVenta::whereIn('id_venta', $idsConDesglose)
+            ->selectRaw('metodo, SUM(monto) as total')
+            ->groupBy('metodo')
+            ->pluck('total', 'metodo');
+
+        $totalPorMetodo = fn (string $metodo) => (float) ($sumsSinDesglose[$metodo] ?? 0) + (float) ($sumsDesglose[$metodo] ?? 0);
+
+        $turno->setAttribute('ventas_tarjeta', $totalPorMetodo('tarjeta'));
+        $turno->setAttribute('ventas_transferencia', $totalPorMetodo('transferencia'));
+        $turno->setAttribute('ventas_qr', $totalPorMetodo('qr'));
+        $turno->setAttribute('ventas_fiado', $totalPorMetodo('fiado'));
 
         return $turno;
     }
