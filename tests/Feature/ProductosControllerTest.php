@@ -429,4 +429,38 @@ class ProductosControllerTest extends TestCase
         $this->assertTrue($nombres->contains('Producto con alternativo'));
         $this->assertFalse($nombres->contains('Producto sin ese proveedor'));
     }
+
+    // Regresión de performance: store() bloqueaba la empresa y contaba TODA
+    // la tabla de productos en cada alta, para un chequeo de límite de plan
+    // que siempre da null en este build (un solo comercio, sin planes pagos)
+    // — se sentía fuerte en una importación masiva de miles de filas. Este
+    // test falla si un COUNT(*)/SELECT sobre "empresas" vuelve a aparecer.
+    public function test_store_no_cuenta_toda_la_tabla_ni_bloquea_la_empresa(): void
+    {
+        [, $empresa, $token] = $this->usuarioConPermisos(['create-productos']);
+        $sucursal = Sucursal::create(['empresa_id' => $empresa->id, 'nombre' => 'Casa Central']);
+        $usuarioActual = \App\Models\User::where('empresa_id', $empresa->id)->first();
+        $usuarioActual->update(['id_sucursal' => $sucursal->id]);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+
+        $huboCountProductos = false;
+        $huboLockEmpresa = false;
+        \Illuminate\Support\Facades\DB::listen(function ($query) use (&$huboCountProductos, &$huboLockEmpresa) {
+            if (str_contains($query->sql, 'count(*)') && str_contains($query->sql, '"productos"')) {
+                $huboCountProductos = true;
+            }
+            if (str_contains($query->sql, '"empresas"') && str_contains(strtolower($query->sql), 'select')) {
+                $huboLockEmpresa = true;
+            }
+        });
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos', [
+                'producto' => 'Producto Test', 'precio' => 100, 'id_categoria' => $categoria->id,
+            ]);
+
+        $response->assertStatus(201);
+        $this->assertFalse($huboCountProductos, 'store() sigue contando toda la tabla de productos');
+        $this->assertFalse($huboLockEmpresa, 'store() sigue bloqueando/leyendo la fila de empresa sin necesidad');
+    }
 }

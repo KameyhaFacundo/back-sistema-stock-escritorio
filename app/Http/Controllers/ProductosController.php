@@ -213,8 +213,6 @@ class ProductosController extends Controller
 
     public function store(CreateProductoRequest $request): JsonResponse
     {
-        $empresa = auth()->user()->empresa;
-
         $idSucursal = auth()->user()->id_sucursal;
         if (!$idSucursal) {
             return response()->json(['success' => false, 'message' => 'Tu usuario no tiene una sucursal asignada'], 422);
@@ -223,17 +221,13 @@ class ProductosController extends Controller
         DB::beginTransaction();
 
         try {
-            // Lock de la empresa dentro de la misma transacción del alta — evita que
-            // dos creaciones simultáneas cuenten productos y pasen el límite del plan
-            // las dos antes de que la primera termine de confirmarse (ver ChecksPlanLimits).
-            if ($empresa) {
-                $empresa = $this->lockEmpresa($empresa);
-                if ($resp = $this->limitePlanExcedido($empresa, 'productos', Producto::count())) {
-                    DB::rollBack();
-                    return $resp;
-                }
-            }
-
+            // Nota: no hay chequeo de límite de plan acá a propósito — este build es
+            // de un solo comercio, sin planes pagos (ver ChecksPlanLimits::limitePlanExcedido(),
+            // siempre null). Antes esto igual hacía un lockForUpdate() de la empresa +
+            // un Producto::count() de TODA la tabla en cada alta — dos queries de más
+            // por producto, ignoradas siempre, que se sentían fuerte en una importación
+            // masiva de miles de filas (cada COUNT(*) más caro que el anterior a medida
+            // que la tabla crecía durante el propio import).
             $validated = $request->validated();
             $componentes = $validated['componentes'] ?? null;
             $proveedoresAlternativos = $validated['proveedores_alternativos'] ?? null;
