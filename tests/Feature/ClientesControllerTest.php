@@ -121,4 +121,25 @@ class ClientesControllerTest extends TestCase
 
         $response->assertStatus(201);
     }
+
+    // index() ahora cachea 5 min (mismo patrón que Proveedores/Categorías) —
+    // sin invalidar la versión al crear, un cliente recién creado no aparecía
+    // en el listado hasta que la caché expirara sola.
+    public function test_cliente_recien_creado_aparece_en_index_a_pesar_de_la_cache(): void
+    {
+        [, $empresa, $token] = $this->usuarioConPermisos(['create-clientes', 'list-clientes'], null);
+        $headers = ['Authorization' => "Bearer {$token}"];
+
+        // Primera consulta: cachea la lista vacía (para esta combinación de params).
+        $this->withHeaders($headers)->getJson('/api/v1/clientes')->assertStatus(200);
+
+        $this->withHeaders($headers)->postJson('/api/v1/clientes', [
+            'persona' => 'Cliente Recién Creado',
+        ])->assertStatus(201);
+
+        $response = $this->withHeaders($headers)->getJson('/api/v1/clientes');
+        $response->assertStatus(200);
+        $nombres = collect($response->json('data.data'))->pluck('persona');
+        $this->assertTrue($nombres->contains('Cliente Recién Creado'));
+    }
 }
