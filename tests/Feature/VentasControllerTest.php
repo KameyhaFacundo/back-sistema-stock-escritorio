@@ -266,4 +266,30 @@ class VentasControllerTest extends TestCase
 
         $this->assertDatabaseHas('turnos', ['ventas_efectivo' => 0, 'efectivo_actual' => 0]);
     }
+
+    // Si anular() siguiera mirando solo metodo_pago (el PRIMER método de un
+    // pago dividido), esta venta quedaría con un "sobrante fantasma" en el
+    // arqueo: se acreditaron $2500 de efectivo al crearla, pero al anular
+    // metodo_pago="tarjeta" no dispararía ninguna reversión.
+    public function test_anular_venta_con_pago_dividido_revierte_solo_la_porcion_efectivo(): void
+    {
+        [$producto, $headers] = $this->armarEscenario(['create-ventas', 'anular-ventas']);
+
+        $venta = $this->withHeaders($headers)->postJson('/api/v1/ventas', [
+            'fecha' => now()->format('Y-m-d'),
+            'metodo_pago' => 'tarjeta',
+            'pagos' => [
+                ['metodo' => 'tarjeta', 'monto' => 2500],
+                ['metodo' => 'efectivo', 'monto' => 2500],
+            ],
+            'lineas' => [['id_producto' => $producto->id, 'cantidad' => 5, 'precio_venta' => (float) $producto->precio]],
+        ])->json('data');
+
+        $this->assertDatabaseHas('turnos', ['ventas_efectivo' => 2500, 'efectivo_actual' => 2500]);
+
+        $response = $this->withHeaders($headers)->postJson("/api/v1/ventas/{$venta['id']}/anular");
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('turnos', ['ventas_efectivo' => 0, 'efectivo_actual' => 0]);
+    }
 }

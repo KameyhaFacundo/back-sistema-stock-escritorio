@@ -7,6 +7,7 @@ use App\Models\Empresa;
 use App\Models\LineaVenta;
 use App\Models\MovimientoPuntos;
 use App\Models\MovimientoStock;
+use App\Models\PagoVenta;
 use App\Models\Producto;
 use App\Models\Turno;
 use App\Models\Venta;
@@ -191,6 +192,20 @@ class VentaCreacionService
             'cuit'          => $cliente?->cuit,
             'motivo_descuento' => $datos['motivo_descuento'] ?? null,
         ]);
+
+        // Se guarda el desglose real de "varios métodos" — sin esto, anular()/
+        // DevolucionVentaService no tienen forma de saber después cuánto de
+        // esta venta fue efectivo de verdad para revertirlo bien (metodo_pago
+        // de la venta solo tiene el primero, ver más abajo).
+        if ($pagos) {
+            foreach ($pagos as $pago) {
+                PagoVenta::create([
+                    'id_venta' => $venta->id,
+                    'metodo'   => $pago['metodo'],
+                    'monto'    => $pago['monto'],
+                ]);
+            }
+        }
 
         // numero_ticket es un código interno generado offline (ver Home.jsx::
         // generarTicketId) para poder armar la venta sin ir al servidor — no es

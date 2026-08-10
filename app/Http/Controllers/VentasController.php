@@ -249,7 +249,7 @@ class VentasController extends Controller
         DB::beginTransaction();
 
         try {
-            $venta = Venta::with(['lineas', 'pagos'])->findOrFail($id);
+            $venta = Venta::with(['lineas', 'pagos', 'pagosVenta'])->findOrFail($id);
 
             if ($venta->estado === 'cancelada') {
                 DB::rollBack();
@@ -300,14 +300,23 @@ class VentasController extends Controller
                 }
             }
 
-            // Revertir el efectivo que sumó el cobro original (si no fue fiado)
-            if ($venta->metodo_pago === 'efectivo' && (float) $venta->monto_cobrado > 0 && $venta->id_turno) {
+            // Revertir el efectivo que sumó el cobro original (si no fue fiado).
+            // Con "varios métodos" (ver variosPagos en Home.jsx), metodo_pago de
+            // la venta solo guarda el PRIMERO cargado — pagosVenta (si hay filas,
+            // fue una venta con desglose) tiene la porción real en efectivo; sin
+            // esas filas, era una venta de un solo método y monto_cobrado ya es
+            // esa cifra completa (mismo criterio que VentaCreacionService al crear).
+            $efectivoACobrar = $venta->pagosVenta->isNotEmpty()
+                ? (float) $venta->pagosVenta->where('metodo', 'efectivo')->sum('monto')
+                : ($venta->metodo_pago === 'efectivo' ? (float) $venta->monto_cobrado : 0);
+
+            if ($efectivoACobrar > 0 && $venta->id_turno) {
                 // lockForUpdate: mismo motivo que en VentaCreacionService/CajaController —
                 // efectivo_actual se lee y se vuelve a escribir más abajo.
                 $turnoOriginal = Turno::where('id', $venta->id_turno)->lockForUpdate()->first();
                 if ($turnoOriginal && $turnoOriginal->estado === 'abierta') {
-                    $turnoOriginal->efectivo_actual = max(0, $turnoOriginal->efectivo_actual - $venta->monto_cobrado);
-                    $turnoOriginal->ventas_efectivo = max(0, $turnoOriginal->ventas_efectivo - $venta->monto_cobrado);
+                    $turnoOriginal->efectivo_actual = max(0, $turnoOriginal->efectivo_actual - $efectivoACobrar);
+                    $turnoOriginal->ventas_efectivo = max(0, $turnoOriginal->ventas_efectivo - $efectivoACobrar);
                     $turnoOriginal->save();
                 } else {
                     $cajaAjustada = false;

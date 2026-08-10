@@ -51,6 +51,14 @@ class Venta extends Model
         return $this->hasMany(PagoCliente::class, 'id_venta');
     }
 
+    // Desglose del cobro original si se pagó con "varios métodos" en el POS
+    // — distinto de pagos() (PagoCliente), que son cobros de fiado hechos
+    // DESPUÉS de la venta, no el desglose del pago inicial.
+    public function pagosVenta()
+    {
+        return $this->hasMany(PagoVenta::class, 'id_venta');
+    }
+
     public function devoluciones()
     {
         return $this->hasMany(DevolucionVenta::class, 'id_venta', 'id');
