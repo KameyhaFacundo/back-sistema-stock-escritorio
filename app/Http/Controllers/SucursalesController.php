@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Concerns\ChecksPlanLimits;
 use App\Models\Sucursal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -10,8 +9,6 @@ use Illuminate\Support\Facades\DB;
 
 class SucursalesController extends Controller
 {
-    use ChecksPlanLimits;
-
     public function index(): JsonResponse
     {
         $sucursales = Sucursal::orderBy('es_principal', 'desc')->orderBy('nombre')->get();
@@ -21,8 +18,6 @@ class SucursalesController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        $empresa = auth('api')->user()->empresa;
-
         $validated = $request->validate([
             'nombre'    => 'required|string|max:150',
             'direccion' => 'nullable|string|max:255',
@@ -32,14 +27,9 @@ class SucursalesController extends Controller
 
         DB::beginTransaction();
         try {
-            if ($empresa) {
-                $empresa = $this->lockEmpresa($empresa);
-                if ($resp = $this->limitePlanExcedido($empresa, 'sucursales', Sucursal::count())) {
-                    DB::rollBack();
-                    return $resp;
-                }
-            }
-
+            // Nota: sin chequeo de límite de plan a propósito (ver el mismo
+            // comentario en ProductosController::store()) — este build es de
+            // un solo comercio, sin planes pagos.
             $sucursal = Sucursal::create($validated);
             DB::commit();
 

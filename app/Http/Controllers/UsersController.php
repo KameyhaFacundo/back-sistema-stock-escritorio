@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Concerns\ChecksPlanLimits;
 use App\Http\Requests\CreateUserRequest;
 use App\Http\Requests\UpdateUserRequest;
 use App\Jobs\SendEmailChangeVerificationJob;
@@ -17,8 +16,6 @@ use Illuminate\Validation\Rule;
 
 class UsersController extends Controller
 {
-    use ChecksPlanLimits;
-
     public function index(Request $request): JsonResponse
     {
         $query = User::with(['rol', 'tipoUsuario', 'sucursal:id,nombre'])
@@ -66,22 +63,12 @@ class UsersController extends Controller
 
     public function store(CreateUserRequest $request): JsonResponse
     {
-        $empresa = auth()->user()->empresa;
-
         DB::beginTransaction();
 
         try {
-            // Lock de la empresa dentro de la misma transacción del alta — evita que
-            // dos creaciones simultáneas cuenten usuarios y pasen el límite del plan
-            // las dos antes de que la primera termine de confirmarse (ver ChecksPlanLimits).
-            if ($empresa) {
-                $empresa = $this->lockEmpresa($empresa);
-                $cantidadActual = User::where('empresa_id', $empresa->id)->count();
-                if ($resp = $this->limitePlanExcedido($empresa, 'usuarios', $cantidadActual)) {
-                    DB::rollBack();
-                    return $resp;
-                }
-            }
+            // Nota: sin chequeo de límite de plan a propósito (ver el mismo
+            // comentario en ProductosController::store()) — este build es de
+            // un solo comercio, sin planes pagos.
 
             // Token de verificación de email — mismo mecanismo que actualizarPerfil/
             // confirmarEmail, acá sin email_pendiente porque no hay cambio, solo
