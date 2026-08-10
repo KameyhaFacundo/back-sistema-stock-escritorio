@@ -97,7 +97,11 @@ class VentasController extends Controller
             ], 403);
         }
 
-        if ($resp = $this->precioLineasSinPermiso($request->lineas, auth()->user()->empresa_id)) {
+        // Una sola consulta de precios de lista para las dos validaciones de
+        // abajo (antes cada una hacía la misma query por su cuenta, en CADA venta).
+        $preciosCache = $this->preciosDeLineas($request->lineas, auth()->user()->empresa_id);
+
+        if ($resp = $this->precioLineasSinPermiso($request->lineas, auth()->user()->empresa_id, $preciosCache)) {
             return $resp;
         }
 
@@ -105,7 +109,7 @@ class VentasController extends Controller
         // por qué — sin esto, el permiso por sí solo no deja ningún rastro de
         // a quién y por qué motivo se le vendió por debajo de lista.
         $hayRecargo = !empty($ajuste) && ($ajuste['tipo'] ?? '') === 'recargo' && (float) ($ajuste['valor'] ?? 0) > 0;
-        $requiereMotivo = $esDescuento || $hayRecargo || $this->hayDescuentoEnLineas($request->lineas, auth()->user()->empresa_id);
+        $requiereMotivo = $esDescuento || $hayRecargo || $this->hayDescuentoEnLineas($request->lineas, auth()->user()->empresa_id, $preciosCache);
         if ($requiereMotivo && empty(trim((string) $request->motivo_descuento))) {
             return response()->json([
                 'success' => false,
