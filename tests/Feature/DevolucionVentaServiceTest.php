@@ -125,6 +125,26 @@ class DevolucionVentaServiceTest extends TestCase
         $this->assertEquals(200.0, (float) $venta->fresh()->monto_cobrado);
     }
 
+    // Devolver algo pagado con tarjeta NO debe tocar el arqueo si el cajero
+    // eligió resolverlo por transferencia — antes esto restaba de efectivo_actual
+    // igual, aunque esa venta nunca metió plata física en la caja.
+    public function test_devolucion_de_venta_con_tarjeta_resuelta_por_transferencia_no_toca_caja(): void
+    {
+        $producto = $this->producto(100);
+        $venta = $this->venta(['metodo_pago' => 'tarjeta', 'monto_cobrado' => 300, 'monto_total' => 300]);
+        $linea = LineaVenta::create(['id_venta' => $venta->id, 'id_producto' => $producto->id, 'nombre' => 'Producto', 'precio_venta' => 100, 'cantidad' => 3]);
+
+        $efectivoAntes = (float) $this->turno->fresh()->efectivo_actual;
+        $devolucion = $this->service->crear($venta->id, [['id_linea_venta' => $linea->id_linea, 'cantidad' => 1]], null, 'transferencia');
+
+        $this->assertEquals($efectivoAntes, (float) $this->turno->fresh()->efectivo_actual);
+        $this->assertEquals(0.0, (float) $devolucion->monto_efectivo_devuelto);
+        $this->assertEquals('transferencia', $devolucion->forma_reintegro);
+        // monto_cobrado sí baja igual — el cliente recuperó ese valor, solo que
+        // no en efectivo del cajón.
+        $this->assertEquals(200.0, (float) $venta->fresh()->monto_cobrado);
+    }
+
     public function test_no_se_puede_devolver_mas_de_lo_disponible(): void
     {
         $producto = $this->producto(100);

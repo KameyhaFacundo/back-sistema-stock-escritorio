@@ -24,8 +24,12 @@ class DevolucionVentaService
 
     /**
      * @param array<array{id_linea_venta:int, cantidad:float}> $lineasData
+     * @param string $formaReintegro Cómo se resuelve con el cliente la diferencia
+     *   a favor, si la hay (ver ModalDevolucionVenta en Dashboard.jsx):
+     *   'efectivo' (ajusta el arqueo), 'transferencia'/'mercaderia'/'saldo_favor'
+     *   (no tocan la caja física — esa plata nunca salió del cajón).
      */
-    public function crear(int $idVenta, array $lineasData, ?string $motivo): DevolucionVenta
+    public function crear(int $idVenta, array $lineasData, ?string $motivo, string $formaReintegro = 'efectivo'): DevolucionVenta
     {
         // lockForUpdate: dos devoluciones parciales concurrentes sobre la misma
         // venta no deben poder devolver de más la misma línea (ver el chequeo
@@ -109,30 +113,39 @@ class DevolucionVentaService
         $montoDevuelto = collect($itemsValidados)->sum(fn($item) => (float) $item['linea']->precio_venta * $item['cantidad']);
 
         // Si el cliente ya había pagado más de lo que le queda por deber
-        // después de esta devolución, la diferencia se le devuelve en
-        // efectivo real — no alcanza con solo bajarle la deuda.
-        $saldoPendienteAntes  = max(0, (float) $venta->monto_total - (float) $venta->monto_cobrado);
-        $efectivoADevolver    = max(0, $montoDevuelto - $saldoPendienteAntes);
-        $cajaAjustada         = true;
+        // después de esta devolución, hay una diferencia a favor suya — pero
+        // cómo se la resuelve el cajero (efectivo del cajón, transferencia,
+        // cambio por mercadería, o queda a favor para otra compra) es una
+        // elección suya, no siempre "sacar plata de la caja" (ver el bug real:
+        // devolver algo pagado con tarjeta descuadraba el arqueo igual, como
+        // si esa plata sí hubiera estado físicamente ahí).
+        $saldoPendienteAntes = max(0, (float) $venta->monto_total - (float) $venta->monto_cobrado);
+        $diferenciaAFavor    = max(0, $montoDevuelto - $saldoPendienteAntes);
+        $montoReintegrado    = $diferenciaAFavor;
+        $efectivoADevolver   = 0;
+        $cajaAjustada        = true;
 
-        if ($efectivoADevolver > 0) {
+        if ($diferenciaAFavor > 0 && $formaReintegro === 'efectivo') {
             // Siempre la caja ACTUALMENTE abierta, no la de la venta original
             // (a diferencia de anular(), que usa la del turno original para el
             // cobro pero la activa para los pagos de fiado — acá se unifica a
             // "turno activo" para los dos casos).
             $turnoActivo = $this->turnoService->activo(auth()->user()->nro_usu, auth()->user()->id_sucursal, lock: true);
             if ($turnoActivo) {
-                $turnoActivo->efectivo_actual = max(0, $turnoActivo->efectivo_actual - $efectivoADevolver);
-                $turnoActivo->ventas_efectivo = max(0, $turnoActivo->ventas_efectivo - $efectivoADevolver);
+                $turnoActivo->efectivo_actual = max(0, $turnoActivo->efectivo_actual - $diferenciaAFavor);
+                $turnoActivo->ventas_efectivo = max(0, $turnoActivo->ventas_efectivo - $diferenciaAFavor);
                 $turnoActivo->save();
+                $efectivoADevolver = $diferenciaAFavor;
             } else {
                 $cajaAjustada = false;
-                $efectivoADevolver = 0;
+                $montoReintegrado = 0; // no se pudo concretar — no se le resta a monto_cobrado
             }
         }
+        // transferencia/mercadería/saldo a favor: no tocan la caja física —
+        // $montoReintegrado ya quedó en $diferenciaAFavor desde arriba.
 
         $venta->monto_total   = max(0, (float) $venta->monto_total - $montoDevuelto);
-        $venta->monto_cobrado = max(0, (float) $venta->monto_cobrado - $efectivoADevolver);
+        $venta->monto_cobrado = max(0, (float) $venta->monto_cobrado - $montoReintegrado);
 
         $devolucion = DevolucionVenta::create([
             'id_venta'                => $venta->id,
@@ -141,6 +154,7 @@ class DevolucionVentaService
             'monto_devuelto'          => $montoDevuelto,
             'monto_efectivo_devuelto' => $efectivoADevolver,
             'caja_ajustada'           => $cajaAjustada,
+            'forma_reintegro'         => $diferenciaAFavor > 0 ? $formaReintegro : null,
         ]);
 
         foreach ($itemsValidados as $item) {

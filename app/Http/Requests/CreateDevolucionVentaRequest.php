@@ -21,6 +21,13 @@ class CreateDevolucionVentaRequest extends FormRequest
             'lineas.*.id_linea_venta'    => 'required|exists:lineas_ventas,id_linea',
             'lineas.*.cantidad'          => 'required|numeric|min:0.01',
             'motivo'                     => 'nullable|string|max:255',
+            // Cómo se le resuelve al cliente la diferencia a favor, si la hay
+            // (ver ModalDevolucionVenta en Dashboard.jsx) — nullable porque no
+            // toda devolución genera una diferencia a favor (puede que el
+            // cliente todavía deba parte de la venta, ver saldoPendienteAntes
+            // en DevolucionVentaService). Sin este dato, se asume 'efectivo'
+            // (mismo comportamiento que había antes de este campo existir).
+            'forma_reintegro'            => 'nullable|in:efectivo,transferencia,mercaderia,saldo_favor',
         ];
     }
 

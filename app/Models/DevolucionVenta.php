@@ -14,7 +14,7 @@ class DevolucionVenta extends Model
 
     protected $fillable = [
         'empresa_id', 'id_venta', 'id_usuario', 'motivo',
-        'monto_devuelto', 'monto_efectivo_devuelto', 'caja_ajustada',
+        'monto_devuelto', 'monto_efectivo_devuelto', 'caja_ajustada', 'forma_reintegro',
     ];
 
     protected $casts = [

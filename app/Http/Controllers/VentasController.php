@@ -378,6 +378,7 @@ class VentasController extends Controller
                 (int) $id,
                 $request->validated()['lineas'],
                 $request->validated()['motivo'] ?? null,
+                $request->validated()['forma_reintegro'] ?? 'efectivo',
             );
 
             DB::commit();
