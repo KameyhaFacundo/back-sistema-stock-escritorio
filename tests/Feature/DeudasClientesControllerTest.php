@@ -9,6 +9,7 @@ use App\Models\LineaVenta;
 use App\Models\Permiso;
 use App\Models\Producto;
 use App\Models\Sucursal;
+use App\Models\Turno;
 use App\Models\User;
 use App\Models\Venta;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -38,7 +39,7 @@ class DeudasClientesControllerTest extends TestCase
         $usuario->permisos()->attach($ids);
         $token = JWTAuth::fromUser($usuario);
 
-        return [$empresa, $sucursal, $categoria, $cliente, ['Authorization' => "Bearer {$token}"]];
+        return [$empresa, $sucursal, $categoria, $cliente, ['Authorization' => "Bearer {$token}"], $usuario];
     }
 
     private function ventaConDeuda(Empresa $empresa, Sucursal $sucursal, Cliente $cliente, float $total, float $cobrado): Venta
@@ -83,6 +84,28 @@ class DeudasClientesControllerTest extends TestCase
         $this->assertEquals(1000, (float) $fresca->monto_cobrado);
         $this->assertEquals('pagado', $fresca->estado_pago);
         $this->assertDatabaseHas('pagos_cliente', ['id_venta' => $venta->id, 'monto' => 200]);
+    }
+
+    // El caso que no tenía ningún rastro: cobrar() ahora deja un movimiento de
+    // caja individual, además de sumar al contador "ventas_efectivo".
+    public function test_cobrar_deja_un_movimiento_de_caja_con_el_nombre_del_cliente(): void
+    {
+        [$empresa, $sucursal, , $cliente, $headers, $usuario] = $this->armarEscenario(['update-ventas']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'fecha' => now()->toDateString(), 'hora_apertura' => '09:00',
+            'monto_inicial' => 500, 'efectivo_actual' => 500, 'ventas_efectivo' => 0,
+        ]);
+
+        $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'),
+        ])->assertStatus(200);
+
+        $movimiento = \App\Models\MovimientoCaja::where('monto', 400)->where('tipo', 'ingreso')->first();
+        $this->assertNotNull($movimiento);
+        $this->assertStringContainsString($cliente->persona, $movimiento->motivo);
+        $this->assertStringContainsString((string) $venta->id, $movimiento->motivo);
     }
 
     public function test_cobrar_rechaza_una_venta_ya_totalmente_pagada(): void

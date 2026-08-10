@@ -79,6 +79,40 @@ class ComprasControllerTest extends TestCase
         $this->assertDatabaseHas('compras', ['id_proveedor' => $proveedor->id, 'cuit' => null]);
     }
 
+    // El movimiento de caja de una compra al contado decía solo "Compra #ID" —
+    // ahora suma el nombre del proveedor, para verlo de un vistazo en Caja sin
+    // entrar a Compras (ver ajustarCajaCompra()).
+    public function test_compra_confirmada_en_efectivo_deja_movimiento_con_nombre_del_proveedor(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['create-compras']);
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Distribuidora Test']);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $producto  = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto Test',
+            'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+        \App\Models\Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'fecha' => now()->toDateString(), 'hora_apertura' => '09:00',
+            'monto_inicial' => 1000, 'efectivo_actual' => 1000, 'ventas_efectivo' => 0,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/compras', [
+                'id_proveedor' => $proveedor->id,
+                'fecha' => now()->format('Y-m-d'),
+                'metodo_pago' => 'efectivo',
+                'lineas' => [
+                    ['id_producto' => $producto->id, 'precio_compra' => 50, 'cantidad' => 10],
+                ],
+            ]);
+
+        $response->assertStatus(201);
+        $movimiento = \App\Models\MovimientoCaja::where('tipo', 'egreso')->where('monto', 500)->first();
+        $this->assertNotNull($movimiento);
+        $this->assertStringContainsString('Distribuidora Test', $movimiento->motivo);
+    }
+
     public function test_subir_comprobante_requiere_permiso(): void
     {
         [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos([]);

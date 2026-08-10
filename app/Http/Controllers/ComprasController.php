@@ -100,11 +100,14 @@ class ComprasController extends Controller
         $turnoActivo = $this->turnoService->activo(auth()->user()->nro_usu, $idSucursal, lock: true);
         if (!$turnoActivo) return;
 
+        $compra->loadMissing('proveedor');
+        $nombreProveedor = $compra->proveedor?->persona;
+
         MovimientoCaja::create([
             'id_turno' => $turnoActivo->id,
             'tipo'     => $monto < 0 ? 'egreso' : 'ingreso',
             'monto'    => abs($monto),
-            'motivo'   => "{$motivoPrefijo} #{$compra->id}",
+            'motivo'   => $nombreProveedor ? "{$motivoPrefijo} #{$compra->id} — {$nombreProveedor}" : "{$motivoPrefijo} #{$compra->id}",
             'hora'     => now()->format('H:i'),
         ]);
 

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Compra;
+use App\Models\MovimientoCaja;
 use App\Models\PagoProveedor;
 use App\Services\TurnoService;
 use Illuminate\Http\JsonResponse;
@@ -120,12 +121,26 @@ class DeudasController extends Controller
             $compra->estado_deuda = $compra->monto_pagado >= $compra->monto_total ? 'pagado' : 'parcial';
             $compra->save();
 
-            // Si el pago fue en efectivo, descontar de la caja
+            // Si el pago fue en efectivo, descontar de la caja — y dejar un
+            // renglón en Movimientos (antes no quedaba ningún rastro visible
+            // de este pago, a diferencia de una compra pagada al contado, que
+            // sí genera un movimiento vía ajustarCajaCompra()).
             if (($request->metodo_pago ?? 'efectivo') === 'efectivo') {
                 $turno = $this->turnoService->activo(auth()->user()->nro_usu, auth()->user()->id_sucursal, lock: true);
                 if ($turno) {
                     $turno->efectivo_actual = max(0, $turno->efectivo_actual - $monto);
                     $turno->save();
+
+                    $nombreProveedor = $compra->loadMissing('proveedor')->proveedor?->persona;
+                    MovimientoCaja::create([
+                        'id_turno' => $turno->id,
+                        'tipo'     => 'egreso',
+                        'monto'    => $monto,
+                        'motivo'   => $nombreProveedor
+                            ? "Pago de deuda #{$compra->id} — {$nombreProveedor}"
+                            : "Pago de deuda #{$compra->id}",
+                        'hora'     => now()->format('H:i'),
+                    ]);
                 }
             }
 

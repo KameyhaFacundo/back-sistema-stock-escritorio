@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Venta;
+use App\Models\MovimientoCaja;
 use App\Models\PagoCliente;
 use App\Services\TurnoService;
 use Illuminate\Http\JsonResponse;
@@ -210,13 +211,26 @@ class DeudasClientesController extends Controller
             $venta->estado_pago    = $venta->monto_cobrado >= $venta->monto_total ? 'pagado' : 'parcial';
             $venta->save();
 
-            // Si cobró en efectivo, sumar a la caja
+            // Si cobró en efectivo, sumar a la caja — y dejar un renglón en
+            // Movimientos (antes solo se sumaba al contador "ventas_efectivo",
+            // sin ningún rastro individual de qué cliente pagó qué).
             if (($request->metodo_pago ?? 'efectivo') === 'efectivo') {
                 $turno = $this->turnoService->activo(auth()->user()->nro_usu, auth()->user()->id_sucursal, lock: true);
                 if ($turno) {
                     $turno->efectivo_actual  += $monto;
                     $turno->ventas_efectivo  += $monto;
                     $turno->save();
+
+                    $nombreCliente = $venta->loadMissing('cliente')->cliente?->persona;
+                    MovimientoCaja::create([
+                        'id_turno' => $turno->id,
+                        'tipo'     => 'ingreso',
+                        'monto'    => $monto,
+                        'motivo'   => $nombreCliente
+                            ? "Cobro de deuda #{$venta->id} — {$nombreCliente}"
+                            : "Cobro de deuda #{$venta->id}",
+                        'hora'     => now()->format('H:i'),
+                    ]);
                 }
             }
 
