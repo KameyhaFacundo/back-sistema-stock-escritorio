@@ -260,6 +260,13 @@ class VentasController extends Controller
                 $idsLineas = $venta->lineas->pluck('id_producto')->filter()->unique();
                 $productosLineas = Producto::whereIn('id', $idsLineas)->with('componentes')->get()->keyBy('id');
 
+                // Una sola consulta agrupada para todas las líneas de la venta, en
+                // vez de un sum() por línea dentro del loop de abajo.
+                $devueltasPorLinea = DevolucionVentaLinea::whereIn('id_linea_venta', $venta->lineas->pluck('id_linea'))
+                    ->selectRaw('id_linea_venta, SUM(cantidad) as total')
+                    ->groupBy('id_linea_venta')
+                    ->pluck('total', 'id_linea_venta');
+
                 $demandaBase = [];
                 foreach ($venta->lineas as $linea) {
                     if (!$linea->id_producto) continue;
@@ -270,7 +277,7 @@ class VentasController extends Controller
                     // DevolucionVentaService), esa parte del stock ya volvió —
                     // anular solo tiene que reponer lo que sigue afuera, si no
                     // duplicaría la reposición de lo ya devuelto.
-                    $yaDevuelta = (float) DevolucionVentaLinea::where('id_linea_venta', $linea->id_linea)->sum('cantidad');
+                    $yaDevuelta = (float) ($devueltasPorLinea[$linea->id_linea] ?? 0);
                     $cantidadNeta = max(0, (float) $linea->cantidad - $yaDevuelta);
                     if ($cantidadNeta <= 0) continue;
 

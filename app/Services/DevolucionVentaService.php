@@ -48,6 +48,13 @@ class DevolucionVentaService
             $pedidoPorLinea[$id] = ($pedidoPorLinea[$id] ?? 0) + (float) $item['cantidad'];
         }
 
+        // Una sola consulta agrupada para todas las líneas pedidas, en vez de un
+        // sum() por línea dentro del loop de validación de abajo.
+        $devueltasPorLinea = DevolucionVentaLinea::whereIn('id_linea_venta', array_keys($pedidoPorLinea))
+            ->selectRaw('id_linea_venta, SUM(cantidad) as total')
+            ->groupBy('id_linea_venta')
+            ->pluck('total', 'id_linea_venta');
+
         $itemsValidados = [];
         foreach ($pedidoPorLinea as $idLineaVenta => $cantidadPedida) {
             $linea = $lineasPorId->get($idLineaVenta);
@@ -55,7 +62,7 @@ class DevolucionVentaService
                 throw new \RuntimeException('Una de las líneas no pertenece a esta venta');
             }
 
-            $yaDevuelta = (float) DevolucionVentaLinea::where('id_linea_venta', $linea->id_linea)->sum('cantidad');
+            $yaDevuelta = (float) ($devueltasPorLinea[$idLineaVenta] ?? 0);
             $disponible = (float) $linea->cantidad - $yaDevuelta;
 
             // Tolerancia chica por redondeo de decimales (unidad_medida fraccionable).
@@ -148,8 +155,14 @@ class DevolucionVentaService
 
         // ¿Quedaron todas las líneas 100% devueltas (contando esta devolución
         // y las anteriores)? Si es así, converge con lo que ya hace anular().
-        $totalmenteDevuelta = $venta->lineas->every(function ($linea) {
-            $devuelto = (float) DevolucionVentaLinea::where('id_linea_venta', $linea->id_linea)->sum('cantidad');
+        // Una sola consulta agrupada para todas las líneas de la venta (incluye
+        // las recién creadas arriba), en vez de un sum() por línea.
+        $devueltoPorLinea = DevolucionVentaLinea::whereIn('id_linea_venta', $venta->lineas->pluck('id_linea'))
+            ->selectRaw('id_linea_venta, SUM(cantidad) as total')
+            ->groupBy('id_linea_venta')
+            ->pluck('total', 'id_linea_venta');
+        $totalmenteDevuelta = $venta->lineas->every(function ($linea) use ($devueltoPorLinea) {
+            $devuelto = (float) ($devueltoPorLinea[$linea->id_linea] ?? 0);
             return $devuelto >= (float) $linea->cantidad - 0.001;
         });
 

@@ -175,4 +175,53 @@ class VentasControllerTest extends TestCase
 
         $response->assertStatus(422);
     }
+
+    // anular() no tenía ningún test — quedó descubierto justo el código que
+    // agrupa las devoluciones parciales por línea (antes: un sum() por línea
+    // dentro del loop) al arreglar ese N+1.
+    public function test_anular_venta_repone_todo_el_stock_vendido(): void
+    {
+        [$producto, $headers] = $this->armarEscenario(['create-ventas', 'anular-ventas']);
+
+        $venta = $this->withHeaders($headers)->postJson('/api/v1/ventas', [
+            'fecha' => now()->format('Y-m-d'),
+            'metodo_pago' => 'efectivo',
+            'lineas' => [['id_producto' => $producto->id, 'cantidad' => 3, 'precio_venta' => (float) $producto->precio]],
+        ])->json('data');
+
+        $this->assertEquals(7, ProductoStock::where('id_producto', $producto->id)->value('stock'));
+
+        $response = $this->withHeaders($headers)->postJson("/api/v1/ventas/{$venta['id']}/anular");
+
+        $response->assertStatus(200);
+        $this->assertEquals(10, ProductoStock::where('id_producto', $producto->id)->value('stock'));
+        $this->assertEquals('cancelada', \App\Models\Venta::find($venta['id'])->estado);
+    }
+
+    // Cubre justo la línea que cambió: si ya hubo una devolución parcial,
+    // anular solo tiene que reponer lo que sigue afuera (no duplicar lo ya
+    // devuelto) — antes de hoy esto se calculaba con un sum() por línea.
+    public function test_anular_venta_con_devolucion_parcial_previa_no_duplica_la_reposicion(): void
+    {
+        [$producto, $headers] = $this->armarEscenario(['create-ventas', 'anular-ventas', 'devolver-ventas']);
+
+        $venta = $this->withHeaders($headers)->postJson('/api/v1/ventas', [
+            'fecha' => now()->format('Y-m-d'),
+            'metodo_pago' => 'efectivo',
+            'lineas' => [['id_producto' => $producto->id, 'cantidad' => 5, 'precio_venta' => (float) $producto->precio]],
+        ])->json('data');
+        $idLinea = $venta['lineas'][0]['id_linea'];
+
+        // Ya se le devolvieron 2 de las 5 al cliente.
+        $this->withHeaders($headers)->postJson("/api/v1/ventas/{$venta['id']}/devolucion", [
+            'lineas' => [['id_linea_venta' => $idLinea, 'cantidad' => 2]],
+        ])->assertStatus(201);
+        $this->assertEquals(7, ProductoStock::where('id_producto', $producto->id)->value('stock'));
+
+        // Anular ahora solo debe reponer las 3 que quedaban afuera, no las 5.
+        $response = $this->withHeaders($headers)->postJson("/api/v1/ventas/{$venta['id']}/anular");
+
+        $response->assertStatus(200);
+        $this->assertEquals(10, ProductoStock::where('id_producto', $producto->id)->value('stock'));
+    }
 }

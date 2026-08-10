@@ -43,10 +43,17 @@ class InventarioController extends Controller
         $salteadosVariantes = 0;
         $errores = [];
 
+        // Una sola consulta para todos los productos de la toma de inventario en
+        // vez de un find() por fila dentro del loop — una toma real cubre decenas
+        // o cientos de productos de una sola vez.
+        $productos = Producto::with(['variantes.talles.stocks'])
+            ->whereIn('id', collect($validated['productos'])->pluck('id_producto'))
+            ->get()->keyBy('id');
+
         DB::beginTransaction();
         try {
             foreach ($validated['productos'] as $item) {
-                $producto = Producto::with(['variantes.talles.stocks'])->find($item['id_producto']);
+                $producto = $productos[$item['id_producto']] ?? null;
                 if (!$producto) continue;
 
                 // Un producto madre con variantes no tiene stock propio — no se

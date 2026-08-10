@@ -52,6 +52,13 @@ class DevolucionCompraService
             $pedidoPorLinea[$id] = ($pedidoPorLinea[$id] ?? 0) + (float) $item['cantidad'];
         }
 
+        // Una sola consulta agrupada para todas las líneas pedidas, en vez de un
+        // sum() por línea dentro del loop de validación de abajo.
+        $devueltasPorLinea = DevolucionCompraLinea::whereIn('id_linea_compra', array_keys($pedidoPorLinea))
+            ->selectRaw('id_linea_compra, SUM(cantidad) as total')
+            ->groupBy('id_linea_compra')
+            ->pluck('total', 'id_linea_compra');
+
         $itemsValidados = [];
         foreach ($pedidoPorLinea as $idLineaCompra => $cantidadPedida) {
             $linea = $lineasPorId->get($idLineaCompra);
@@ -59,7 +66,7 @@ class DevolucionCompraService
                 throw new \RuntimeException('Una de las líneas no pertenece a esta compra');
             }
 
-            $yaDevuelta = (float) DevolucionCompraLinea::where('id_linea_compra', $linea->id_linea)->sum('cantidad');
+            $yaDevuelta = (float) ($devueltasPorLinea[$idLineaCompra] ?? 0);
             $disponible = (float) $linea->cantidad - $yaDevuelta;
 
             if ($cantidadPedida > $disponible + 0.001) {
@@ -152,9 +159,15 @@ class DevolucionCompraService
         }
 
         // ¿Quedaron todas las líneas 100% devueltas? Converge con lo que ya
-        // hace ComprasController::changeStatus() al cancelar.
-        $totalmenteDevuelta = $compra->lineas->every(function ($linea) {
-            $devuelto = (float) DevolucionCompraLinea::where('id_linea_compra', $linea->id_linea)->sum('cantidad');
+        // hace ComprasController::changeStatus() al cancelar. Una sola consulta
+        // agrupada para todas las líneas de la compra (incluye las recién
+        // creadas arriba), en vez de un sum() por línea.
+        $devueltoPorLinea = DevolucionCompraLinea::whereIn('id_linea_compra', $compra->lineas->pluck('id_linea'))
+            ->selectRaw('id_linea_compra, SUM(cantidad) as total')
+            ->groupBy('id_linea_compra')
+            ->pluck('total', 'id_linea_compra');
+        $totalmenteDevuelta = $compra->lineas->every(function ($linea) use ($devueltoPorLinea) {
+            $devuelto = (float) ($devueltoPorLinea[$linea->id_linea] ?? 0);
             return $devuelto >= (float) $linea->cantidad - 0.001;
         });
 
