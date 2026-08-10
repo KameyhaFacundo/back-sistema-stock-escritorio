@@ -144,10 +144,25 @@ class ComprasController extends Controller
             $query->where('fecha', '<=', $request->fecha_hasta);
         }
 
-        // Mismo desempate que VentasController::index() — orderBy('fecha') solo
-        // ordena por día, dos compras del mismo día quedaban en un orden
-        // indefinido entre sí.
-        $compras = $query->orderBy('fecha', 'desc')->orderBy('id', 'desc')->paginate($request->per_page ?? 15);
+        // Para Compras.jsx, que ahora ordena/pagina contra el backend en vez de
+        // sobre un array capado a PAGE_SIZES.DEFAULT filtrado del lado del cliente.
+        if ($request->sort === 'total') {
+            $query->orderBy('monto_total', $request->dir === 'asc' ? 'asc' : 'desc');
+        } elseif ($request->sort === 'proveedor') {
+            // join (no whereHas) porque acá sí hace falta ORDENAR por una columna
+            // de la tabla relacionada, no solo filtrar — select('compras.*') evita
+            // que las columnas de "proveedores" (con id propio) pisen las de compras.
+            $query->join('proveedores', 'compras.id_proveedor', '=', 'proveedores.id')
+                ->orderBy('proveedores.persona', $request->dir === 'asc' ? 'asc' : 'desc')
+                ->select('compras.*');
+        } else {
+            // Mismo desempate que VentasController::index() — orderBy('fecha') solo
+            // ordena por día, dos compras del mismo día quedaban en un orden
+            // indefinido entre sí.
+            $query->orderBy('fecha', 'desc')->orderBy('id', 'desc');
+        }
+
+        $compras = $query->paginate($request->per_page ?? 15);
 
         return response()->json(['success' => true, 'data' => $compras]);
     }

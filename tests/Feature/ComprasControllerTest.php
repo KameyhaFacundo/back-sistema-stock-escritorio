@@ -182,4 +182,61 @@ class ComprasControllerTest extends TestCase
         $this->assertNull($compra->refresh()->comprobante_path);
         Storage::disk('public')->assertMissing($path);
     }
+
+    // Regresión: Compras.jsx pedía sin per_page (default 200 de PAGE_SIZES.DEFAULT)
+    // una sola vez y filtraba/paginaba TODO del lado del cliente sobre ese array
+    // capado — con más de 200 compras en el historial, las más viejas quedaban
+    // invisibles para cualquier búsqueda/filtro. Este test confirma que con
+    // per_page chico se puede pedir cualquier página y el total real es correcto.
+    public function test_index_pagina_correctamente_mas_alla_del_limite_viejo_de_200(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['list-compras']);
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Test']);
+        for ($i = 0; $i < 3; $i++) {
+            Compra::create([
+                'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+                'id_proveedor' => $proveedor->id, 'id_usuario' => $usuario->nro_usu,
+                'estado' => 'confirmada', 'fecha' => now()->subDays($i)->format('Y-m-d'),
+                'monto_total' => 100 * ($i + 1), 'cuit' => '0',
+            ]);
+        }
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/compras?per_page=2&page=2');
+
+        $response->assertStatus(200);
+        $this->assertEquals(3, $response->json('data.total'));
+        $this->assertCount(1, $response->json('data.data'));
+    }
+
+    public function test_index_ordena_por_total(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['list-compras']);
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Test']);
+        Compra::create(['empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_proveedor' => $proveedor->id, 'id_usuario' => $usuario->nro_usu, 'estado' => 'confirmada', 'fecha' => now()->format('Y-m-d'), 'monto_total' => 500, 'cuit' => '0']);
+        Compra::create(['empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_proveedor' => $proveedor->id, 'id_usuario' => $usuario->nro_usu, 'estado' => 'confirmada', 'fecha' => now()->format('Y-m-d'), 'monto_total' => 100, 'cuit' => '0']);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/compras?sort=total&dir=asc');
+
+        $response->assertStatus(200);
+        $montos = collect($response->json('data.data'))->pluck('monto_total');
+        $this->assertEquals(['100.00', '500.00'], $montos->all());
+    }
+
+    public function test_index_ordena_por_proveedor(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['list-compras']);
+        $provA = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Zeta Distribuciones']);
+        $provB = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Alfa Insumos']);
+        Compra::create(['empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_proveedor' => $provA->id, 'id_usuario' => $usuario->nro_usu, 'estado' => 'confirmada', 'fecha' => now()->format('Y-m-d'), 'monto_total' => 100, 'cuit' => '0']);
+        Compra::create(['empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_proveedor' => $provB->id, 'id_usuario' => $usuario->nro_usu, 'estado' => 'confirmada', 'fecha' => now()->format('Y-m-d'), 'monto_total' => 100, 'cuit' => '0']);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/compras?sort=proveedor&dir=asc');
+
+        $response->assertStatus(200);
+        $nombres = collect($response->json('data.data'))->pluck('proveedor.persona');
+        $this->assertEquals(['Alfa Insumos', 'Zeta Distribuciones'], $nombres->all());
+    }
 }
