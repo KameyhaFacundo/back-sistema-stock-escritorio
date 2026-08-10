@@ -332,4 +332,101 @@ class ProductosControllerTest extends TestCase
         $this->assertEquals('50.00', $data[1]['precio_compra']);
         $this->assertEquals('Proveedor A', $data[1]['compra']['proveedor']['persona']);
     }
+
+    public function test_store_crea_producto_con_proveedores_alternativos(): void
+    {
+        [$usuario, $empresa, $token] = $this->usuarioConPermisos(['create-productos']);
+        $sucursal = Sucursal::create(['empresa_id' => $empresa->id, 'nombre' => 'Casa Central']);
+        $usuario->update(['id_sucursal' => $sucursal->id]);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $principal = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Principal']);
+        $alternativo = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Alternativo']);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos', [
+                'producto' => 'Producto con varios proveedores',
+                'precio' => 100,
+                'id_categoria' => $categoria->id,
+                'id_proveedor' => $principal->id,
+                'proveedores_alternativos' => [
+                    ['id_proveedor' => $alternativo->id, 'costo' => 45.5, 'codigo_proveedor' => 'ALT-1'],
+                ],
+            ]);
+
+        $response->assertStatus(201);
+        $producto = Producto::where('producto', 'Producto con varios proveedores')->firstOrFail();
+        $this->assertDatabaseHas('producto_proveedores', [
+            'id_producto' => $producto->id,
+            'id_proveedor' => $alternativo->id,
+            'costo' => 45.5,
+            'codigo_proveedor' => 'ALT-1',
+        ]);
+        $this->assertEquals($alternativo->id, $response->json('data.proveedores_alternativos.0.id'));
+        $this->assertEquals(45.5, $response->json('data.proveedores_alternativos.0.pivot.costo'));
+    }
+
+    public function test_store_rechaza_proveedor_principal_repetido_como_alternativo(): void
+    {
+        [$usuario, $empresa, $token] = $this->usuarioConPermisos(['create-productos']);
+        $sucursal = Sucursal::create(['empresa_id' => $empresa->id, 'nombre' => 'Casa Central']);
+        $usuario->update(['id_sucursal' => $sucursal->id]);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Único Proveedor']);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos', [
+                'producto' => 'Producto con proveedor repetido',
+                'precio' => 100,
+                'id_categoria' => $categoria->id,
+                'id_proveedor' => $proveedor->id,
+                'proveedores_alternativos' => [['id_proveedor' => $proveedor->id]],
+            ]);
+
+        $response->assertStatus(422);
+        $this->assertDatabaseMissing('productos', ['producto' => 'Producto con proveedor repetido']);
+    }
+
+    public function test_update_reemplaza_proveedores_alternativos(): void
+    {
+        [$usuario, $empresa, $token] = $this->usuarioConPermisos(['create-productos', 'update-productos']);
+        $sucursal = Sucursal::create(['empresa_id' => $empresa->id, 'nombre' => 'Casa Central']);
+        $usuario->update(['id_sucursal' => $sucursal->id]);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $producto = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto editable', 'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+        $proveedorViejo = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Viejo']);
+        $proveedorNuevo = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Nuevo']);
+        $producto->proveedoresAlternativos()->sync([$proveedorViejo->id => ['empresa_id' => $empresa->id, 'costo' => 10, 'codigo_proveedor' => null]]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->putJson("/api/v1/productos/{$producto->id}", [
+                'proveedores_alternativos' => [['id_proveedor' => $proveedorNuevo->id, 'costo' => 20]],
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertDatabaseMissing('producto_proveedores', ['id_producto' => $producto->id, 'id_proveedor' => $proveedorViejo->id]);
+        $this->assertDatabaseHas('producto_proveedores', ['id_producto' => $producto->id, 'id_proveedor' => $proveedorNuevo->id, 'costo' => 20]);
+    }
+
+    public function test_index_filtra_por_proveedor_alternativo(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Buscado']);
+        $producto = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto con alternativo', 'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+        $producto->proveedoresAlternativos()->attach($proveedor->id, ['empresa_id' => $empresa->id]);
+        Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto sin ese proveedor', 'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson("/api/v1/productos?id_proveedor={$proveedor->id}");
+
+        $response->assertStatus(200);
+        $nombres = collect($response->json('data.data'))->pluck('producto');
+        $this->assertTrue($nombres->contains('Producto con alternativo'));
+        $this->assertFalse($nombres->contains('Producto sin ese proveedor'));
+    }
 }

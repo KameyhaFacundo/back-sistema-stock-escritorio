@@ -43,6 +43,12 @@ class CreateProductoRequest extends FormRequest
             // Un combo puede mezclar productos de categorías distintas — no se le exige una.
             'id_categoria'       => 'required_unless:es_combo,true|nullable|exists:categorias,id',
             'id_proveedor'       => 'nullable|exists:proveedores,id',
+            // Proveedores adicionales, además del principal (id_proveedor) — cada
+            // uno puede tener su propio costo/código para este producto.
+            'proveedores_alternativos'                    => 'nullable|array',
+            'proveedores_alternativos.*.id_proveedor'     => 'required_with:proveedores_alternativos|exists:proveedores,id',
+            'proveedores_alternativos.*.costo'            => 'nullable|numeric|min:0',
+            'proveedores_alternativos.*.codigo_proveedor' => 'nullable|string|max:100',
             'fecha_vencimiento'  => 'nullable|date',
             'es_combo'                   => 'nullable|boolean',
             'componentes'                => 'required_if:es_combo,true|array|min:1',

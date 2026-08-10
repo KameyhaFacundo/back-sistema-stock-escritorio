@@ -61,6 +61,16 @@ class Producto extends Model
         return $this->belongsTo(Proveedor::class, 'id_proveedor', 'id');
     }
 
+    // Proveedores ALTERNATIVOS a los que también se le puede comprar este
+    // producto, además del principal (id_proveedor/proveedor() arriba) — ver
+    // producto_proveedores. Cada uno puede tener su propio costo/código.
+    public function proveedoresAlternativos()
+    {
+        return $this->belongsToMany(Proveedor::class, 'producto_proveedores', 'id_producto', 'id_proveedor')
+            ->withPivot('costo', 'codigo_proveedor')
+            ->withTimestamps();
+    }
+
     public function lineasCompras()
     {
         return $this->hasMany(LineaCompra::class, 'id_producto', 'id');

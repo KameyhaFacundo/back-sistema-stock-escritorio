@@ -10,6 +10,7 @@ use App\Models\HistorialPrecio;
 use App\Models\LineaCompra;
 use App\Models\Producto;
 use App\Models\ProductoStock;
+use App\Models\Proveedor;
 use App\Services\GeminiService;
 use App\Services\StockService;
 use App\Services\VarianteProductoService;
@@ -91,7 +92,7 @@ class ProductosController extends Controller
 
         $productos = Cache::remember($cacheKey, 300, function () use ($request, $idSucursal) {
             $query = Producto::with([
-                'categoria', 'proveedor',
+                'categoria', 'proveedor', 'proveedoresAlternativos',
                 'stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
                 'componentes.producto.stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
                 'grupoTalle', 'talle',
@@ -133,8 +134,15 @@ class ProductosController extends Controller
                 $query->where('estado', $request->estado);
             }
 
+            // Filtra por proveedor principal O alternativo — un producto tiene que
+            // aparecer en la lista de "sus" productos aunque este proveedor no sea
+            // el principal, si no queda invisible desde ese lado de la relación.
             if ($request->filled('id_proveedor')) {
-                $query->where('id_proveedor', $request->id_proveedor);
+                $idProveedor = $request->id_proveedor;
+                $query->where(function ($q) use ($idProveedor) {
+                    $q->where('id_proveedor', $idProveedor)
+                      ->orWhereHas('proveedoresAlternativos', fn ($q2) => $q2->whereKey($idProveedor));
+                });
             }
 
             if ($request->boolean('stock_bajo')) {
@@ -187,7 +195,7 @@ class ProductosController extends Controller
     {
         $idSucursal = $this->sucursalDeRequest($request);
         $producto = Producto::with([
-            'categoria', 'proveedor',
+            'categoria', 'proveedor', 'proveedoresAlternativos',
             'stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
             'componentes.producto.stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
             'grupoTalle', 'talle',
@@ -228,11 +236,20 @@ class ProductosController extends Controller
 
             $validated = $request->validated();
             $componentes = $validated['componentes'] ?? null;
+            $proveedoresAlternativos = $validated['proveedores_alternativos'] ?? null;
             $stockInicial = (float) ($validated['stock'] ?? 0);
             $stockMinimo  = (float) ($validated['stock_minimo'] ?? 5);
-            unset($validated['componentes'], $validated['stock'], $validated['stock_minimo']);
+            unset($validated['componentes'], $validated['proveedores_alternativos'], $validated['stock'], $validated['stock_minimo']);
 
             $producto = Producto::create($validated);
+
+            if ($proveedoresAlternativos !== null) {
+                $error = $this->sincronizarProveedoresAlternativos($producto, $proveedoresAlternativos);
+                if ($error) {
+                    DB::rollBack();
+                    return response()->json(['success' => false, 'message' => $error], 422);
+                }
+            }
 
             // El stock inicial solo tiene sentido para un producto normal — ni un
             // combo (se calcula de sus componentes) ni un producto madre con
@@ -267,7 +284,7 @@ class ProductosController extends Controller
             DB::commit();
             $this->clearListCache();
             $producto->load([
-                'categoria', 'proveedor',
+                'categoria', 'proveedor', 'proveedoresAlternativos',
                 'stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
                 'componentes.producto.stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
                 'grupoTalle', 'talle',
@@ -306,12 +323,21 @@ class ProductosController extends Controller
             $producto = Producto::findOrFail($id);
             $validated = $request->validated();
             $componentes = $validated['componentes'] ?? null;
+            $proveedoresAlternativos = array_key_exists('proveedores_alternativos', $validated) ? $validated['proveedores_alternativos'] : null;
             $stockMinimo = $validated['stock_minimo'] ?? null;
-            unset($validated['componentes'], $validated['stock_minimo']);
+            unset($validated['componentes'], $validated['proveedores_alternativos'], $validated['stock_minimo']);
 
             $precioAnterior = (float) $producto->precio;
             $costoAnterior  = (float) $producto->costo;
             $producto->update($validated);
+
+            if ($proveedoresAlternativos !== null) {
+                $error = $this->sincronizarProveedoresAlternativos($producto, $proveedoresAlternativos);
+                if ($error) {
+                    DB::rollBack();
+                    return response()->json(['success' => false, 'message' => $error], 422);
+                }
+            }
 
             // La alerta de stock es por sucursal — solo tiene sentido para un
             // producto con stock propio, no para un combo ni un producto madre.
@@ -363,7 +389,7 @@ class ProductosController extends Controller
             DB::commit();
             $this->clearListCache();
             $producto->load([
-                'categoria', 'proveedor',
+                'categoria', 'proveedor', 'proveedoresAlternativos',
                 'stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
                 'componentes.producto.stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
                 'grupoTalle', 'talle',
@@ -672,6 +698,39 @@ class ProductosController extends Controller
                 'cantidad'    => $componente['cantidad'],
             ]);
         }
+
+        return null;
+    }
+
+    private function sincronizarProveedoresAlternativos(Producto $producto, array $alternativos): ?string
+    {
+        $ids = collect($alternativos)->pluck('id_proveedor');
+
+        if ($producto->id_proveedor && $ids->contains($producto->id_proveedor)) {
+            return 'El proveedor principal no puede repetirse como alternativo';
+        }
+
+        if ($ids->duplicates()->isNotEmpty()) {
+            return 'No se puede repetir el mismo proveedor alternativo';
+        }
+
+        $existentes = Proveedor::where('empresa_id', $producto->empresa_id)->whereIn('id', $ids)->count();
+        if ($existentes !== $ids->unique()->count()) {
+            return 'Uno de los proveedores alternativos no existe';
+        }
+
+        // sync() inserta filas de la tabla pivote directo por query builder, sin
+        // pasar por Producto::creating() — HasTenant no la alcanza, así que
+        // empresa_id hay que mandarlo a mano (mismo motivo que ComboComponente::create()
+        // de arriba lo hace explícito en vez de confiar en el trait).
+        $sync = collect($alternativos)->mapWithKeys(fn ($a) => [
+            $a['id_proveedor'] => [
+                'empresa_id'       => $producto->empresa_id,
+                'costo'            => $a['costo'] ?? null,
+                'codigo_proveedor' => $a['codigo_proveedor'] ?? null,
+            ],
+        ]);
+        $producto->proveedoresAlternativos()->sync($sync);
 
         return null;
     }
