@@ -85,12 +85,20 @@ class StockService
 
     /**
      * Resta stock consumiendo lotes FEFO (los que vencen primero).
+     *
+     * $filaYaBloqueada/$disponibleYaValidado: para un caller que YA bloqueó esta
+     * fila y calculó disponible() en la MISMA transacción, sin hacer ningún otro
+     * trabajo en el medio que pudiera cambiar los lotes (ver VentaCreacionService,
+     * que valida el stock de todos los productos de la venta antes de descontar
+     * ninguno) — evita repetir el SELECT...FOR UPDATE y el SUM(lotes.cantidad) que
+     * de otra forma se hacen dos veces por producto en cada venta, el camino más
+     * caliente de todo el sistema. Sin pasarlos, se comporta igual que antes.
      */
-    public function restar(int $idProducto, int $idSucursal, float $cantidad, int $empresaId): ProductoStock
+    public function restar(int $idProducto, int $idSucursal, float $cantidad, int $empresaId, ?ProductoStock $filaYaBloqueada = null, ?float $disponibleYaValidado = null): ProductoStock
     {
-        return DB::transaction(function () use ($idProducto, $idSucursal, $cantidad, $empresaId) {
-            $fila = $this->lockOrCrear($idProducto, $idSucursal, $empresaId);
-            $disponible = $this->disponible($idProducto, $idSucursal);
+        return DB::transaction(function () use ($idProducto, $idSucursal, $cantidad, $empresaId, $filaYaBloqueada, $disponibleYaValidado) {
+            $fila = $filaYaBloqueada ?? $this->lockOrCrear($idProducto, $idSucursal, $empresaId);
+            $disponible = $disponibleYaValidado ?? $this->disponible($idProducto, $idSucursal);
 
             if ($disponible < $cantidad) {
                 throw new \RuntimeException("Stock insuficiente. Disponible: {$disponible}, solicitado: {$cantidad}");

@@ -82,6 +82,37 @@ class VentaCreacionServiceTest extends TestCase
         $this->assertEquals(5, $stock->stock, 'producto_stock.stock debe coincidir con lo que queda en los lotes');
     }
 
+    // Regresión de performance: el chequeo de stock (lockOrCrear + disponible)
+    // se hacía dos veces por producto en cada venta — una vez para validar
+    // antes de descontar, y otra vez de nuevo adentro de StockService::restar().
+    // Este test falla si esa duplicación vuelve, contando cuántas queries
+    // "producto_stock"/"lotes" corren para una venta de un solo producto.
+    public function test_crear_venta_no_repite_el_chequeo_de_stock_por_producto(): void
+    {
+        ['producto' => $producto, 'usuario' => $usuario, 'turno' => $turno] = $this->armarEscenario();
+
+        $queriesStock = 0;
+        \Illuminate\Support\Facades\DB::listen(function ($query) use (&$queriesStock) {
+            if (str_contains($query->sql, '"producto_stock"') || str_contains($query->sql, '"lotes"')) {
+                $queriesStock++;
+            }
+        });
+
+        app(VentaCreacionService::class)->crear([
+            'lineas'      => [['id_producto' => $producto->id, 'cantidad' => 1, 'precio_venta' => (float) $producto->precio]],
+            'metodo_pago' => 'efectivo',
+            'id_usuario'  => $usuario->nro_usu,
+            'fecha'       => now()->format('Y-m-d'),
+            'hora'        => now()->format('H:i'),
+        ], $producto->empresa_id, $turno->id);
+
+        // 1 SELECT (lockOrCrear) + 1 SUM (disponible) + 1 SELECT de lotes a
+        // consumir + 1 UPDATE de producto_stock + N UPDATE de lotes tocados —
+        // sin la duplicación no debería superar un puñado bajo de consultas,
+        // nunca el doble de eso.
+        $this->assertLessThanOrEqual(6, $queriesStock, 'El chequeo de stock parece estar repitiéndose por producto otra vez');
+    }
+
     public function test_movimiento_de_venta_describe_el_id_real_no_el_ticket_interno(): void
     {
         ['producto' => $producto, 'usuario' => $usuario, 'turno' => $turno] = $this->armarEscenario();

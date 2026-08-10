@@ -118,16 +118,24 @@ class VentaCreacionService
         // La validación mira disponible() (suma de lotes), la misma fuente que después
         // usa StockService::restar() para descontar — así el chequeo temprano y el
         // descuento real nunca pueden quedar en desacuerdo entre sí.
+        // Se guardan la fila ya bloqueada y el disponible() ya calculado de cada
+        // producto — el loop de más abajo que de verdad descuenta stock (restar())
+        // los reutiliza en vez de repetir el mismo SELECT...FOR UPDATE y SUM(lotes)
+        // por segunda vez para cada producto, en la venta (la operación más
+        // frecuente de todo el sistema).
+        $filasBloqueadas = [];
+        $disponiblePorProducto = [];
         foreach ($demandaBase as $idProducto => $cantidadRequerida) {
             $productoBase = $productosBase[$idProducto] ?? null;
             if (!$productoBase) {
                 throw new \RuntimeException('Producto no encontrado');
             }
-            $this->stockService->lockOrCrear($idProducto, $idSucursal, $empresaId);
+            $filasBloqueadas[$idProducto] = $this->stockService->lockOrCrear($idProducto, $idSucursal, $empresaId);
             $disponible = $this->stockService->disponible($idProducto, $idSucursal);
             if ($disponible < $cantidadRequerida) {
                 throw new \RuntimeException("Stock insuficiente para '{$productoBase->producto}'. Disponible: {$disponible}");
             }
+            $disponiblePorProducto[$idProducto] = $disponible;
         }
 
         $montoTotal = collect($datos['lineas'])->sum(fn($l) => $l['precio_venta'] * $l['cantidad']);
@@ -215,7 +223,7 @@ class VentaCreacionService
         // desincronizaban las dos fuentes.
         foreach ($demandaBase as $idProducto => $cantidadRequerida) {
             $productoBase = $productosBase[$idProducto];
-            $this->stockService->restar($idProducto, $idSucursal, $cantidadRequerida, $empresaId);
+            $this->stockService->restar($idProducto, $idSucursal, $cantidadRequerida, $empresaId, $filasBloqueadas[$idProducto], $disponiblePorProducto[$idProducto]);
 
             // Auditoría de inventario — dentro de la misma transacción que la venta,
             // para que quede atómico (antes se creaba desde el front como un paso
