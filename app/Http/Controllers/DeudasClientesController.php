@@ -80,15 +80,33 @@ class DeudasClientesController extends Controller
                 COUNT(*)                                 AS cantidad_ventas
             ')
             ->groupBy('ventas.id_cliente', 'clientes.persona')
+            ->get();
+
+        // Cuánto de ese total_cobrado fue por cada método — todas las ventas de
+        // este resumen arrancaron en "fiado" (única forma de que estado_pago no
+        // sea ya "pagado" desde el alta, ver VentaCreacionService), así que todo
+        // su monto_cobrado viene de pagos_cliente, nada que sumar de la venta en sí.
+        $cobradoPorMetodo = DB::table('pagos_cliente')
+            ->join('ventas', 'pagos_cliente.id_venta', '=', 'ventas.id')
+            ->where('ventas.empresa_id', $empresaId)
+            ->whereIn('ventas.estado_pago', ['pendiente', 'parcial'])
+            ->where('ventas.estado', '!=', 'cancelada')
+            ->whereNull('ventas.deleted_at')
+            ->selectRaw('ventas.id_cliente, pagos_cliente.metodo_pago, SUM(pagos_cliente.monto) as total')
+            ->groupBy('ventas.id_cliente', 'pagos_cliente.metodo_pago')
             ->get()
-            ->map(fn($r) => [
-                'id_cliente'      => (int) $r->id_cliente,
-                'cliente'         => $r->cliente,
-                'total_vendido'   => (float) $r->total_vendido,
-                'total_cobrado'   => (float) $r->total_cobrado,
-                'saldo_pendiente' => (float) $r->saldo_pendiente,
-                'cantidad_ventas' => (int)   $r->cantidad_ventas,
-            ]);
+            ->groupBy('id_cliente');
+
+        $resumen = $resumen->map(fn($r) => [
+            'id_cliente'        => (int) $r->id_cliente,
+            'cliente'           => $r->cliente,
+            'total_vendido'     => (float) $r->total_vendido,
+            'total_cobrado'     => (float) $r->total_cobrado,
+            'saldo_pendiente'   => (float) $r->saldo_pendiente,
+            'cantidad_ventas'   => (int)   $r->cantidad_ventas,
+            'cobrado_por_metodo' => ($cobradoPorMetodo->get($r->id_cliente) ?? collect())
+                ->mapWithKeys(fn($p) => [$p->metodo_pago ?? 'efectivo' => (float) $p->total]),
+        ]);
 
         return response()->json(['success' => true, 'data' => $resumen]);
     }

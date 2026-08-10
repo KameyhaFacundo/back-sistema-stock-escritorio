@@ -121,6 +121,27 @@ class DeudasClientesControllerTest extends TestCase
         $this->assertEquals(1000, (float) $venta->fresh()->monto_cobrado);
     }
 
+    public function test_resumen_desglosa_lo_cobrado_por_metodo(): void
+    {
+        [$empresa, $sucursal, , $cliente, $headers] = $this->armarEscenario(['update-ventas', 'list-clientes']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+        $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 300, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'efectivo',
+        ])->assertStatus(200);
+        $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 200, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'transferencia',
+        ])->assertStatus(200);
+
+        $response = $this->withHeaders($headers)->getJson('/api/v1/deudas-clientes/resumen');
+
+        $response->assertStatus(200);
+        $fila = collect($response->json('data'))->firstWhere('id_cliente', $cliente->id);
+        $this->assertNotNull($fila);
+        $this->assertEquals(300, $fila['cobrado_por_metodo']['efectivo']);
+        $this->assertEquals(200, $fila['cobrado_por_metodo']['transferencia']);
+        $this->assertEquals(500, (float) $fila['total_cobrado']);
+    }
+
     public function test_index_no_devuelve_ventas_ya_pagadas_por_defecto(): void
     {
         [$empresa, $sucursal, , $cliente, $headers] = $this->armarEscenario(['list-clientes']);

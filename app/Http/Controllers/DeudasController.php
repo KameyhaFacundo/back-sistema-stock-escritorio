@@ -74,15 +74,33 @@ class DeudasController extends Controller
                 COUNT(*)                                         AS cantidad_compras
             ')
             ->groupBy('compras.id_proveedor', 'proveedores.persona')
+            ->get();
+
+        // Cuánto de ese total_pagado fue por cada método (efectivo/transferencia/
+        // tarjeta/...) — todas las compras de este resumen arrancaron en
+        // "cuenta_corriente" (es la única forma de que estado_deuda no sea ya
+        // "pagado" desde el alta, ver store()), así que TODO su monto_pagado
+        // viene de pagos_proveedor, sin nada que sumar de la compra en sí.
+        $pagadoPorMetodo = DB::table('pagos_proveedor')
+            ->join('compras', 'pagos_proveedor.id_compra', '=', 'compras.id')
+            ->where('compras.empresa_id', $empresaId)
+            ->whereIn('compras.estado_deuda', ['pendiente', 'parcial'])
+            ->whereNull('compras.deleted_at')
+            ->selectRaw('compras.id_proveedor, pagos_proveedor.metodo_pago, SUM(pagos_proveedor.monto) as total')
+            ->groupBy('compras.id_proveedor', 'pagos_proveedor.metodo_pago')
             ->get()
-            ->map(fn($r) => [
-                'id_proveedor'     => (int) $r->id_proveedor,
-                'proveedor'        => $r->proveedor,
-                'total_comprado'   => (float) $r->total_comprado,
-                'total_pagado'     => (float) $r->total_pagado,
-                'saldo_pendiente'  => (float) $r->saldo_pendiente,
-                'cantidad_compras' => (int) $r->cantidad_compras,
-            ]);
+            ->groupBy('id_proveedor');
+
+        $resumen = $resumen->map(fn($r) => [
+            'id_proveedor'      => (int) $r->id_proveedor,
+            'proveedor'         => $r->proveedor,
+            'total_comprado'    => (float) $r->total_comprado,
+            'total_pagado'      => (float) $r->total_pagado,
+            'saldo_pendiente'   => (float) $r->saldo_pendiente,
+            'cantidad_compras'  => (int) $r->cantidad_compras,
+            'pagado_por_metodo' => ($pagadoPorMetodo->get($r->id_proveedor) ?? collect())
+                ->mapWithKeys(fn($p) => [$p->metodo_pago ?? 'efectivo' => (float) $p->total]),
+        ]);
 
         return response()->json(['success' => true, 'data' => $resumen]);
     }

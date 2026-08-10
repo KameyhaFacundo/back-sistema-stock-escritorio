@@ -32,7 +32,7 @@ class DeudasControllerTest extends TestCase
             'des_usu' => 'Usuario Test', 'email' => 'test' . uniqid() . '@test.com',
             'password' => bcrypt('password'), 'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
         ]);
-        $ids = Permiso::whereIn('codigo', ['update-compras'])->pluck('id');
+        $ids = Permiso::whereIn('codigo', ['update-compras', 'list-proveedores'])->pluck('id');
         $usuario->permisos()->attach($ids);
         $token = JWTAuth::fromUser($usuario);
 
@@ -97,6 +97,26 @@ class DeudasControllerTest extends TestCase
         $fresca = $compra->fresh();
         $this->assertEquals(1000, (float) $fresca->monto_pagado);
         $this->assertEquals('pagado', $fresca->estado_deuda);
+    }
+
+    public function test_resumen_desglosa_lo_pagado_por_metodo(): void
+    {
+        [, $compra, $headers] = $this->armarEscenario(1000, 0);
+        $this->withHeaders($headers)->postJson("/api/v1/deudas/{$compra->id}/pagar", [
+            'monto' => 300, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'efectivo',
+        ])->assertStatus(200);
+        $this->withHeaders($headers)->postJson("/api/v1/deudas/{$compra->id}/pagar", [
+            'monto' => 200, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'transferencia',
+        ])->assertStatus(200);
+
+        $response = $this->withHeaders($headers)->getJson('/api/v1/deudas/resumen');
+
+        $response->assertStatus(200);
+        $fila = collect($response->json('data'))->firstWhere('id_proveedor', $compra->id_proveedor);
+        $this->assertNotNull($fila);
+        $this->assertEquals(300, $fila['pagado_por_metodo']['efectivo']);
+        $this->assertEquals(200, $fila['pagado_por_metodo']['transferencia']);
+        $this->assertEquals(500, (float) $fila['total_pagado']);
     }
 
     public function test_pagar_rechaza_una_compra_ya_totalmente_pagada(): void
