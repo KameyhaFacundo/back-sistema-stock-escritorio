@@ -24,6 +24,35 @@ class CajaController extends Controller
         return now()->format('H:i');
     }
 
+    // Campos con plata sensible: antes solo se ocultaban en el front (ver
+    // fmtOculto/ocultarMontos en Caja.jsx), pero el JSON crudo con los montos
+    // reales igual viajaba al navegador — cualquiera con el Network tab
+    // abierto los veía sin importar el permiso ver-montos-caja. Se ponen en
+    // null acá, antes de que la respuesta salga, para que la restricción sea
+    // real y no solo visual. cerrar() es la única excepción a propósito: es
+    // el momento en el que el arqueo ciego SE REVELA (ver comentario ahí).
+    private const CAMPOS_MONTO_SENSIBLES = [
+        'monto_inicial', 'monto_final', 'monto_esperado', 'diferencia', 'efectivo_actual',
+        'ventas_efectivo', 'ventas_tarjeta', 'ventas_transferencia', 'ventas_qr', 'ventas_fiado',
+        'ventas_sum_monto_total',
+    ];
+
+    private function ocultarMontosSiCorresponde(?Turno $turno): ?Turno
+    {
+        if (!$turno || auth()->user()->chequearPermisos('ver-montos-caja')) {
+            return $turno;
+        }
+
+        foreach (self::CAMPOS_MONTO_SENSIBLES as $campo) {
+            if ($turno->getAttribute($campo) !== null) {
+                $turno->setAttribute($campo, null);
+            }
+        }
+        $turno->movimientos?->each(fn ($mov) => $mov->setAttribute('monto', null));
+
+        return $turno;
+    }
+
     /**
      * A diferencia de "ventas_efectivo" (columna del turno, actualizada
      * incrementalmente porque alimenta el arqueo de efectivo físico), tarjeta,
@@ -65,6 +94,7 @@ class CajaController extends Controller
             ->first();
 
         $this->agregarTotalesPorMetodo($turno);
+        $this->ocultarMontosSiCorresponde($turno);
 
         return response()->json([
             'success' => true,
@@ -83,6 +113,8 @@ class CajaController extends Controller
             ->where('id_sucursal', auth()->user()->id_sucursal)
             ->orderBy('created_at', 'desc')
             ->paginate($request->per_page ?? 20);
+
+        $turnos->getCollection()->each(fn ($t) => $this->ocultarMontosSiCorresponde($t));
 
         return response()->json([
             'success' => true,
@@ -125,7 +157,7 @@ class CajaController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Caja abierta correctamente',
-                'data'    => $turno->load('movimientos'),
+                'data'    => $this->ocultarMontosSiCorresponde($turno->load('movimientos')),
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -218,7 +250,11 @@ class CajaController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Movimiento registrado',
-                'data'    => ['movimiento' => $mov, 'turno' => $turno->fresh('movimientos')],
+                // 'movimiento' no se toca: es el eco de lo que el propio usuario
+                // acaba de tipear, no información nueva que "ver-montos-caja" deba
+                // esconderle. 'turno' sí (ver ocultarMontosSiCorresponde) — es el
+                // que de verdad lee el frontend (cajaService.agregarMovimiento).
+                'data'    => ['movimiento' => $mov, 'turno' => $this->ocultarMontosSiCorresponde($turno->fresh('movimientos'))],
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();

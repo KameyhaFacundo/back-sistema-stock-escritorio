@@ -127,4 +127,45 @@ class CajaControllerTest extends TestCase
         $response->assertStatus(201);
         $this->assertEquals('cerrada', $turnoViejo->fresh()->estado);
     }
+
+    // Sin ver-montos-caja, los montos viajaban igual en el JSON aunque el
+    // front los tapara con "•••••" — cualquiera con el Network tab abierto
+    // los veía. Estos dos tests cubren que ahora el propio backend los oculta.
+    public function test_turno_activo_sin_ver_montos_caja_oculta_los_montos(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConCaja(['list-caja', 'create-caja']);
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_usuario' => $usuario->nro_usu, 'estado' => 'abierta',
+            'fecha' => now()->format('Y-m-d'), 'hora_apertura' => '08:00',
+            'monto_inicial' => 1000, 'efectivo_actual' => 1500, 'ventas_efectivo' => 500,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/caja/turno-activo');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.monto_inicial', null);
+        $response->assertJsonPath('data.efectivo_actual', null);
+        $response->assertJsonPath('data.ventas_efectivo', null);
+    }
+
+    public function test_turno_activo_con_ver_montos_caja_muestra_los_montos(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConCaja(['list-caja', 'create-caja', 'ver-montos-caja']);
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id,
+            'id_usuario' => $usuario->nro_usu, 'estado' => 'abierta',
+            'fecha' => now()->format('Y-m-d'), 'hora_apertura' => '08:00',
+            'monto_inicial' => 1000, 'efectivo_actual' => 1500, 'ventas_efectivo' => 500,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson('/api/v1/caja/turno-activo');
+
+        $response->assertOk();
+        $response->assertJsonPath('data.monto_inicial', '1000.00');
+        $response->assertJsonPath('data.efectivo_actual', '1500.00');
+        $response->assertJsonPath('data.ventas_efectivo', '500.00');
+    }
 }
