@@ -277,6 +277,16 @@ class ProductosController extends Controller
 
             DB::commit();
             $this->clearListCache();
+
+            // ?ligero=1: una importación masiva (ver Productos.jsx::confirmarImportacion())
+            // crea cientos/miles de productos seguidos y no usa la respuesta de cada
+            // uno más que para saber si salió bien — el reload de acá abajo (8
+            // relaciones distintas) solo hace falta para refrescar la fila en la UI
+            // normal de alta/edición, no en un loop en lote.
+            if ($request->boolean('ligero')) {
+                return response()->json(['success' => true, 'message' => 'Producto creado correctamente', 'data' => ['id' => $producto->id]], 201);
+            }
+
             $producto->load([
                 'categoria', 'proveedor', 'proveedoresAlternativos',
                 'stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),
@@ -382,6 +392,14 @@ class ProductosController extends Controller
 
             DB::commit();
             $this->clearListCache();
+
+            // ?ligero=1: ver el mismo flag en store() — una actualización masiva
+            // (ModalActualizarPrecios en Productos.jsx) llama a esto cientos de
+            // veces seguidas y no usa la respuesta de cada una.
+            if ($request->boolean('ligero')) {
+                return response()->json(['success' => true, 'message' => 'Producto actualizado correctamente', 'data' => ['id' => $producto->id]]);
+            }
+
             $producto->load([
                 'categoria', 'proveedor', 'proveedoresAlternativos',
                 'stocks' => fn($q) => $q->where('id_sucursal', $idSucursal),

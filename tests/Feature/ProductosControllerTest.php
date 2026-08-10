@@ -463,4 +463,43 @@ class ProductosControllerTest extends TestCase
         $this->assertFalse($huboCountProductos, 'store() sigue contando toda la tabla de productos');
         $this->assertFalse($huboLockEmpresa, 'store() sigue bloqueando/leyendo la fila de empresa sin necesidad');
     }
+
+    // ?ligero=1 se usa en las actualizaciones/altas EN LOTE (ver
+    // ModalActualizarPrecios y confirmarImportacion() en Productos.jsx), que
+    // no leen la respuesta completa — solo confirma que el producto se creó,
+    // sin el reload de 8 relaciones que la UI normal sí necesita.
+    public function test_store_con_ligero_no_devuelve_las_relaciones_completas(): void
+    {
+        [, $empresa, $token] = $this->usuarioConPermisos(['create-productos']);
+        $sucursal = Sucursal::create(['empresa_id' => $empresa->id, 'nombre' => 'Casa Central']);
+        \App\Models\User::where('empresa_id', $empresa->id)->first()->update(['id_sucursal' => $sucursal->id]);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos?ligero=1', [
+                'producto' => 'Producto Test', 'precio' => 100, 'id_categoria' => $categoria->id,
+            ]);
+
+        $response->assertStatus(201);
+        $this->assertArrayNotHasKey('categoria', $response->json('data'));
+        $this->assertDatabaseHas('productos', ['producto' => 'Producto Test', 'empresa_id' => $empresa->id]);
+    }
+
+    public function test_update_con_ligero_no_devuelve_las_relaciones_completas(): void
+    {
+        [, $empresa, $token] = $this->usuarioConPermisos(['create-productos', 'update-productos']);
+        $sucursal = Sucursal::create(['empresa_id' => $empresa->id, 'nombre' => 'Casa Central']);
+        \App\Models\User::where('empresa_id', $empresa->id)->first()->update(['id_sucursal' => $sucursal->id]);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $producto = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto Viejo', 'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->putJson("/api/v1/productos/{$producto->id}?ligero=1", ['precio' => 150]);
+
+        $response->assertStatus(200);
+        $this->assertArrayNotHasKey('categoria', $response->json('data'));
+        $this->assertEquals(150, (float) $producto->fresh()->precio);
+    }
 }
