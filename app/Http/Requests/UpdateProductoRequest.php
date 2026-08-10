@@ -43,7 +43,7 @@ class UpdateProductoRequest extends FormRequest
                     $fail('Un combo siempre se vende por unidad.');
                     return;
                 }
-                if (auth()->user()?->empresa?->tipo !== 'ferret') {
+                if (auth()->user()?->empresa?->tipo === 'indument') {
                     $fail('Esta unidad de medida no está disponible para tu tipo de comercio.');
                 }
             }],

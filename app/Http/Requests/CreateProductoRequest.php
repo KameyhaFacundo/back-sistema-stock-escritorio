@@ -22,8 +22,9 @@ class CreateProductoRequest extends FormRequest
             'codigo_barras' => 'nullable|string|max:100|unique:productos,codigo_barras',
             'precio'       => 'required|numeric|min:0',
             'costo'        => 'nullable|numeric|min:0',
-            // Unidades fraccionables (kg/metro/litro) son solo para ferretería, nunca
-            // para un combo (un combo siempre se vende 1/2/3 unidades enteras) — ver
+            // Unidades fraccionables (kg/metro/litro) están disponibles para cualquier
+            // rubro salvo indumentaria (una prenda no se vende "por kg") — nunca para
+            // un combo tampoco (un combo siempre se vende 1/2/3 unidades enteras). Ver
             // el closure abajo, es el único lugar del sistema que decide esto.
             'unidad_medida' => ['nullable', 'string', Rule::in(['unidad', 'kg', 'metro', 'litro']), function ($attribute, $value, $fail) {
                 if (!$value || $value === 'unidad') {
@@ -33,7 +34,7 @@ class CreateProductoRequest extends FormRequest
                     $fail('Un combo siempre se vende por unidad.');
                     return;
                 }
-                if (auth()->user()?->empresa?->tipo !== 'ferret') {
+                if (auth()->user()?->empresa?->tipo === 'indument') {
                     $fail('Esta unidad de medida no está disponible para tu tipo de comercio.');
                 }
             }],

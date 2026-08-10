@@ -112,6 +112,103 @@ class MovimientosController extends Controller
         return response()->json(['success' => true, 'data' => $mov], 201);
     }
 
+    /**
+     * Ajuste masivo (importación Excel o "Ajuste masivo" por filtro) en UNA
+     * sola request — antes Movimientos.jsx llamaba a store() una vez por
+     * fila (aunque fuera en lotes paralelos de a 8): con el servidor PHP
+     * embebido de un solo hilo, esas N requests se procesaban una por una
+     * igual del lado del servidor. Cada fila se procesa de forma
+     * independiente (una fila con stock insuficiente no tumba el resto del
+     * lote), pero todo queda en una sola transacción/request.
+     */
+    public function bulkStore(Request $request)
+    {
+        $idSucursal = auth()->user()?->id_sucursal;
+        if (!$idSucursal) {
+            return response()->json(['success' => false, 'message' => 'Tu usuario no tiene una sucursal asignada'], 422);
+        }
+        $empresaId = auth()->user()->empresa_id;
+        $idUsuario = auth()->user()->nro_usu;
+
+        $items = $request->input('items', []);
+        if (!is_array($items) || empty($items)) {
+            return response()->json(['success' => false, 'message' => 'No se enviaron movimientos'], 422);
+        }
+
+        $hoy  = now()->format('Y-m-d');
+        $hora = now()->format('H:i');
+
+        $ok = 0;
+        $fallidos = 0;
+        // Índices (dentro de $items) que NO se pudieron aplicar — el caller
+        // (ej. ModalAjusteMasivo en Movimientos.jsx) los necesita para saber
+        // exactamente qué filas entran en el Excel de "aplicadas" que arma
+        // al terminar, no puede asumir que fue todo o nada.
+        $indicesFallidos = [];
+
+        DB::beginTransaction();
+        try {
+            foreach ($items as $index => $item) {
+                $idProducto = $item['id_producto'] ?? null;
+                $cantidad   = $item['cantidad'] ?? null;
+                $nombre     = trim((string) ($item['producto'] ?? ''));
+                $nota       = trim((string) ($item['nota'] ?? ''));
+
+                if (!$idProducto || !is_numeric($cantidad) || (float) $cantidad == 0 || $nombre === '') {
+                    $fallidos++;
+                    $indicesFallidos[] = $index;
+                    continue;
+                }
+                // Mismo requisito que store(): una baja sin motivo es la
+                // tapadera perfecta para un faltante.
+                if ((float) $cantidad < 0 && $nota === '') {
+                    $fallidos++;
+                    $indicesFallidos[] = $index;
+                    continue;
+                }
+
+                $producto = Producto::find($idProducto);
+                if (!$producto || $producto->empresa_id !== $empresaId || $producto->tiene_variantes) {
+                    $fallidos++;
+                    $indicesFallidos[] = $index;
+                    continue;
+                }
+
+                try {
+                    $this->stockService->ajustar($producto->id, $idSucursal, (float) $cantidad, $empresaId);
+                    MovimientoStock::create([
+                        'id_producto' => $producto->id,
+                        'producto'    => $nombre,
+                        'codigo'      => $item['codigo'] ?? '',
+                        'tipo'        => 'ajuste',
+                        'sub_tipo'    => $item['sub_tipo'] ?? '',
+                        'nota'        => $nota,
+                        'cantidad'    => $cantidad,
+                        'fecha'       => $hoy,
+                        'hora'        => $hora,
+                        'id_usuario'  => $idUsuario,
+                        'id_sucursal' => $idSucursal,
+                    ]);
+                    $ok++;
+                } catch (\RuntimeException $e) {
+                    // Stock insuficiente para esta fila puntual — no tumba el resto.
+                    $fallidos++;
+                    $indicesFallidos[] = $index;
+                }
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error al aplicar los ajustes', 'error' => $e->getMessage()], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "{$ok} movimiento" . ($ok !== 1 ? 's' : '') . " aplicado" . ($ok !== 1 ? 's' : '') . ($fallidos ? " · {$fallidos} fallaron" : ''),
+            'data' => ['aplicados' => $ok, 'fallidos' => $fallidos, 'indices_fallidos' => $indicesFallidos],
+        ], 201);
+    }
+
     // POST /movimientos/transferencia — mueve stock de una sucursal a otra y deja
     // el par de movimientos (salida/entrada) que ya arma StockService::transferir().
     public function transferencia(Request $request)

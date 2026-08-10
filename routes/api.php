@@ -166,6 +166,9 @@ $apiRoutes = function () {
                 Route::get('/',                          [ProductosController::class, 'index'])              ->middleware('permisos.verify:list-productos');
                 Route::get('{id}',                       [ProductosController::class, 'show'])               ->middleware('permisos.verify:view-productos');
                 Route::post('/',                         [ProductosController::class, 'store'])              ->middleware('permisos.verify:create-productos');
+                Route::post('bulk',                      [ProductosController::class, 'bulkStore'])          ->middleware('permisos.verify:create-productos');
+                Route::post('bulk-precio',                [ProductosController::class, 'bulkUpdatePrecio'])   ->middleware('permisos.verify:update-productos');
+                Route::post('codigos-existentes',         [ProductosController::class, 'codigosExistentes'])  ->middleware('permisos.verify:create-productos');
                 Route::put('{id}',                       [ProductosController::class, 'update'])             ->middleware('permisos.verify:update-productos');
                 Route::delete('{id}',                    [ProductosController::class, 'destroy'])            ->middleware('permisos.verify:delete-productos');
                 Route::get('{id}/historial-precios',     [ProductosController::class, 'historialPrecios'])   ->middleware('permisos.verify:view-productos');
@@ -240,6 +243,7 @@ $apiRoutes = function () {
             Route::prefix('movimientos')->group(function () {
                 Route::get('/',              [MovimientosController::class, 'index'])         ->middleware('permisos.verify:list-movimientos');
                 Route::post('/',             [MovimientosController::class, 'store'])         ->middleware('permisos.verify:create-movimientos');
+                Route::post('bulk',          [MovimientosController::class, 'bulkStore'])      ->middleware('permisos.verify:create-movimientos');
                 Route::post('transferencia', [MovimientosController::class, 'transferencia'])  ->middleware('permisos.verify:create-movimientos');
             });
 

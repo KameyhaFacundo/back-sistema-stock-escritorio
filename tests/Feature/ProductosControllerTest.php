@@ -502,4 +502,139 @@ class ProductosControllerTest extends TestCase
         $this->assertArrayNotHasKey('categoria', $response->json('data'));
         $this->assertEquals(150, (float) $producto->fresh()->precio);
     }
+
+    public function test_codigos_existentes_devuelve_solo_los_que_matchean(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        \App\Models\User::where('empresa_id', $empresa->id)->first()->permisos()->attach(Permiso::whereIn('codigo', ['create-productos'])->pluck('id'));
+        Producto::create(['empresa_id' => $empresa->id, 'producto' => 'P1', 'precio' => 100, 'id_categoria' => $categoria->id, 'codigo' => 'EXISTE-1']);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos/codigos-existentes', ['codigos' => ['EXISTE-1', 'NO-EXISTE']]);
+
+        $response->assertStatus(200);
+        $this->assertEquals(['EXISTE-1'], $response->json('data'));
+    }
+
+    public function test_codigos_existentes_no_incluye_los_de_otra_empresa(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        \App\Models\User::where('empresa_id', $empresa->id)->first()->permisos()->attach(Permiso::whereIn('codigo', ['create-productos'])->pluck('id'));
+        $empresaB = Empresa::create(['nombre' => 'Empresa B ' . uniqid(), 'tipo' => 'almacen', 'plan' => 'pro']);
+        $categoriaB = Categoria::create(['empresa_id' => $empresaB->id, 'categoria' => 'Cat B']);
+        Producto::create(['empresa_id' => $empresaB->id, 'producto' => 'Ajeno', 'precio' => 100, 'id_categoria' => $categoriaB->id, 'codigo' => 'AJENO-1']);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos/codigos-existentes', ['codigos' => ['AJENO-1']]);
+
+        $response->assertStatus(200);
+        $this->assertEquals([], $response->json('data'));
+    }
+
+    public function test_bulk_store_crea_varios_productos_en_una_sola_request(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        // usuarioConCatalogo() ya asigna sucursal, pero create-productos no está en el permiso base — lo agregamos.
+        $usuario = \App\Models\User::where('empresa_id', $empresa->id)->first();
+        $ids = Permiso::whereIn('codigo', ['create-productos'])->pluck('id');
+        $usuario->permisos()->attach($ids);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos/bulk', [
+                'productos' => [
+                    ['producto' => 'Producto A', 'codigo' => 'A-1', 'precio' => 100, 'stock' => 5, 'id_categoria' => $categoria->id],
+                    ['producto' => 'Producto B', 'codigo' => 'B-1', 'precio' => 200, 'stock' => 3, 'id_categoria' => $categoria->id],
+                ],
+            ]);
+
+        $response->assertStatus(201);
+        $this->assertEquals(2, $response->json('data.creados'));
+        $this->assertEquals(0, $response->json('data.errores'));
+        $this->assertDatabaseHas('productos', ['empresa_id' => $empresa->id, 'codigo' => 'A-1', 'precio' => 100]);
+        $this->assertDatabaseHas('productos', ['empresa_id' => $empresa->id, 'codigo' => 'B-1', 'precio' => 200]);
+        $productoA = Producto::where('codigo', 'A-1')->first();
+        $this->assertEquals(5, (float) ProductoStock::where('id_producto', $productoA->id)->value('stock'));
+    }
+
+    public function test_bulk_store_saltea_filas_invalidas_y_codigos_duplicados_sin_tumbar_el_resto(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        $usuario = \App\Models\User::where('empresa_id', $empresa->id)->first();
+        $ids = Permiso::whereIn('codigo', ['create-productos'])->pluck('id');
+        $usuario->permisos()->attach($ids);
+
+        Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Ya existe', 'precio' => 50,
+            'id_categoria' => $categoria->id, 'codigo' => 'DUP-1',
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos/bulk', [
+                'productos' => [
+                    ['producto' => 'Producto válido', 'codigo' => 'NUEVO-1', 'precio' => 100, 'id_categoria' => $categoria->id],
+                    ['producto' => '', 'precio' => 100, 'id_categoria' => $categoria->id], // sin nombre
+                    ['producto' => 'Código duplicado con la base', 'codigo' => 'dup-1', 'precio' => 100, 'id_categoria' => $categoria->id],
+                    ['producto' => 'Código duplicado dentro del archivo', 'codigo' => 'REPE-1', 'precio' => 100, 'id_categoria' => $categoria->id],
+                    ['producto' => 'Código duplicado dentro del archivo 2', 'codigo' => 'REPE-1', 'precio' => 100, 'id_categoria' => $categoria->id],
+                ],
+            ]);
+
+        $response->assertStatus(201);
+        $this->assertEquals(2, $response->json('data.creados'));
+        $this->assertEquals(3, $response->json('data.errores'));
+        $this->assertDatabaseHas('productos', ['empresa_id' => $empresa->id, 'codigo' => 'NUEVO-1']);
+        $this->assertDatabaseHas('productos', ['empresa_id' => $empresa->id, 'codigo' => 'REPE-1']);
+        $this->assertEquals(1, Producto::where('empresa_id', $empresa->id)->where('codigo', 'REPE-1')->count());
+    }
+
+    public function test_bulk_update_precio_actualiza_varios_y_registra_historial(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        $usuario = \App\Models\User::where('empresa_id', $empresa->id)->first();
+        $ids = Permiso::whereIn('codigo', ['update-productos'])->pluck('id');
+        $usuario->permisos()->attach($ids);
+
+        $p1 = Producto::create(['empresa_id' => $empresa->id, 'producto' => 'P1', 'precio' => 100, 'id_categoria' => $categoria->id]);
+        $p2 = Producto::create(['empresa_id' => $empresa->id, 'producto' => 'P2', 'precio' => 200, 'id_categoria' => $categoria->id]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos/bulk-precio', [
+                'items' => [
+                    ['id' => $p1->id, 'precio' => 150],
+                    ['id' => $p2->id, 'precio' => 200], // sin cambio real — no debe generar historial
+                ],
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertEquals(1, $response->json('data.actualizados'));
+        $this->assertEquals(150, (float) $p1->fresh()->precio);
+        $this->assertEquals(200, (float) $p2->fresh()->precio);
+        $this->assertDatabaseHas('historial_precios', [
+            'id_producto' => $p1->id, 'campo' => 'precio', 'precio_anterior' => 100, 'precio_nuevo' => 150,
+        ]);
+        $this->assertDatabaseMissing('historial_precios', ['id_producto' => $p2->id]);
+    }
+
+    public function test_bulk_update_precio_no_toca_productos_de_otra_empresa(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        $usuario = \App\Models\User::where('empresa_id', $empresa->id)->first();
+        $ids = Permiso::whereIn('codigo', ['update-productos'])->pluck('id');
+        $usuario->permisos()->attach($ids);
+
+        $empresaB = Empresa::create(['nombre' => 'Empresa B ' . uniqid(), 'tipo' => 'almacen', 'plan' => 'pro']);
+        $categoriaB = Categoria::create(['empresa_id' => $empresaB->id, 'categoria' => 'Cat B']);
+        $productoAjeno = Producto::create([
+            'empresa_id' => $empresaB->id, 'producto' => 'Ajeno', 'precio' => 100, 'id_categoria' => $categoriaB->id,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/productos/bulk-precio', [
+                'items' => [['id' => $productoAjeno->id, 'precio' => 999]],
+            ]);
+
+        $response->assertStatus(200);
+        $this->assertEquals(0, $response->json('data.actualizados'));
+        $this->assertEquals(100, (float) $productoAjeno->fresh()->precio);
+    }
 }

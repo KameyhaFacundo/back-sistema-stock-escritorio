@@ -9,16 +9,15 @@ use Illuminate\Contracts\Validation\ValidationRule;
 
 /**
  * Cantidad válida para una línea de venta/compra/movimiento: entera si el
- * producto referenciado usa la unidad 'unidad' (el default de todo el mundo
- * salvo ferretería), o hasta 2 decimales si el producto tiene una unidad
- * fraccionable (kg/metro/litro).
+ * producto referenciado usa la unidad 'unidad' (el default), o hasta 2
+ * decimales si el producto tiene una unidad fraccionable (kg/metro/litro).
  *
  * Se fija en el producto (`unidad_medida`), no en el tipo de empresa — el
  * único lugar que decide si un producto PUEDE tener una unidad fraccionable
  * es CreateProductoRequest/UpdateProductoRequest (ahí sí se chequea
- * empresa.tipo === 'ferret'). Una vez que un producto ya tiene esa unidad
- * asignada, todo lo demás (esta regla incluida) confía en ese dato — así
- * el motor queda reutilizable para cuando otro rubro la necesite.
+ * empresa.tipo, disponible para cualquier rubro salvo indumentaria). Una vez
+ * que un producto ya tiene esa unidad asignada, todo lo demás (esta regla
+ * incluida) confía en ese dato.
  *
  * Espera que el campo hermano "id_producto" viva al lado de "cantidad" en
  * el mismo nivel del payload (ej: "lineas.*.cantidad" junto a

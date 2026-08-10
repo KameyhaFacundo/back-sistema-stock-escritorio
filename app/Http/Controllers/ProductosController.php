@@ -314,6 +314,214 @@ class ProductosController extends Controller
         }
     }
 
+    /**
+     * Qué códigos de una lista ya existen en el catálogo — UNA sola consulta
+     * indexada (WHERE IN) en vez de un GET /productos?codigo_exacto= por
+     * código único como hacía antes Productos.jsx::handleImportarCSV(). Esa
+     * vista previa de la importación no se mostraba hasta que terminaban
+     * TODAS esas consultas (aunque fueran en paralelo de a 8): con un
+     * catálogo grande y un archivo con muchos códigos únicos, el modal de
+     * "revisá antes de importar" podía tardar varios segundos en aparecer
+     * sin ningún indicador de carga, como si la app se hubiera colgado.
+     */
+    public function codigosExistentes(Request $request): JsonResponse
+    {
+        $empresaId = auth()->user()->empresa_id;
+        $codigos = $request->input('codigos', []);
+        if (!is_array($codigos) || empty($codigos)) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $existentes = Producto::where('empresa_id', $empresaId)
+            ->whereIn('codigo', array_slice($codigos, 0, 5000))
+            ->pluck('codigo');
+
+        return response()->json(['success' => true, 'data' => $existentes]);
+    }
+
+    /**
+     * Alta masiva (importación desde Excel/CSV) en UNA sola request — antes
+     * Productos.jsx::confirmarImportacion() hacía un POST /productos por fila
+     * (aunque fuera en lotes paralelos de a 8): con el servidor PHP embebido
+     * de un solo hilo, esas N requests igual se procesan una por una del lado
+     * del servidor, cada una con su propio ida-y-vuelta HTTP + su propia
+     * transacción. Acá es UN solo request, UNA sola transacción, y el chequeo
+     * de código duplicado es UNA sola consulta (antes era una por código
+     * único). No valida con CreateProductoRequest (pensado para un producto
+     * a la vez con mensajes de error puntuales) — filas inválidas se cuentan
+     * como error y se saltean, no tumban el resto del lote.
+     */
+    public function bulkStore(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        $idSucursal = $user->id_sucursal;
+        if (!$idSucursal) {
+            return response()->json(['success' => false, 'message' => 'Tu usuario no tiene una sucursal asignada'], 422);
+        }
+        $empresaId = $user->empresa_id;
+        // Unidades fraccionables (kg/metro/litro): disponibles para cualquier rubro
+        // salvo indumentaria — mismo criterio que CreateProductoRequest/UpdateProductoRequest.
+        $esFerreteria = $user->empresa?->tipo !== 'indument';
+        $esIndumentaria = $user->empresa?->tipo === 'indument';
+
+        $filas = $request->input('productos', []);
+        if (!is_array($filas) || empty($filas)) {
+            return response()->json(['success' => false, 'message' => 'No se enviaron productos'], 422);
+        }
+
+        $codigosExistentes = Producto::where('empresa_id', $empresaId)
+            ->whereNotNull('codigo')
+            ->pluck('codigo')
+            ->map(fn ($c) => strtolower($c))
+            ->flip();
+
+        $creados = 0;
+        $errores = 0;
+        $codigosUsados = [];
+
+        DB::beginTransaction();
+        try {
+            foreach ($filas as $fila) {
+                $nombre = trim((string) ($fila['producto'] ?? ''));
+                $precio = $fila['precio'] ?? null;
+                $idCategoria = $fila['id_categoria'] ?? null;
+                if ($nombre === '' || !is_numeric($precio) || $precio < 0 || !$idCategoria) {
+                    $errores++;
+                    continue;
+                }
+
+                $codigo = trim((string) ($fila['codigo'] ?? ''));
+                $codigo = $codigo !== '' ? $codigo : null;
+                if ($codigo) {
+                    $key = strtolower($codigo);
+                    if (isset($codigosExistentes[$key]) || isset($codigosUsados[$key])) {
+                        $errores++;
+                        continue;
+                    }
+                    $codigosUsados[$key] = true;
+                }
+
+                // Mismo criterio que CreateProductoRequest: unidad fraccionable
+                // solo ferretería, variantes por talle solo indumentaria — acá
+                // se normaliza en vez de rechazar la fila entera por esto.
+                $unidadMedida = ($esFerreteria && !empty($fila['unidad_medida'])) ? $fila['unidad_medida'] : 'unidad';
+                $tieneVariantes = $esIndumentaria && !empty($fila['tiene_variantes']) && !empty($fila['id_grupo_talle']);
+
+                $producto = Producto::create([
+                    'empresa_id'      => $empresaId,
+                    'producto'        => $nombre,
+                    'codigo'          => $codigo,
+                    'precio'          => $precio,
+                    'costo'           => $fila['costo'] ?? 0,
+                    'id_categoria'    => $idCategoria,
+                    'id_proveedor'    => $fila['id_proveedor'] ?? null,
+                    'unidad_medida'   => $unidadMedida,
+                    'tiene_variantes' => $tieneVariantes,
+                    'id_grupo_talle'  => $tieneVariantes ? $fila['id_grupo_talle'] : null,
+                    'id_talle'        => (!$tieneVariantes && $esIndumentaria) ? ($fila['id_talle'] ?? null) : null,
+                ]);
+
+                if ($producto->tiene_variantes) {
+                    $this->varianteService->sincronizar($producto);
+                } else {
+                    $this->stockService->lockOrCrear($producto->id, $idSucursal, $empresaId);
+                    $stockInicial = (float) ($fila['stock'] ?? 0);
+                    if ($stockInicial > 0) {
+                        $this->stockService->agregar($producto->id, $idSucursal, $stockInicial, $empresaId);
+                    }
+                }
+
+                $creados++;
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error al importar productos', 'error' => $e->getMessage()], 500);
+        }
+
+        if ($creados > 0) {
+            $this->clearListCache();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "{$creados} producto" . ($creados !== 1 ? 's' : '') . " importado" . ($creados !== 1 ? 's' : '') . ($errores ? " · {$errores} fallaron" : ''),
+            'data' => ['creados' => $creados, 'errores' => $errores],
+        ], 201);
+    }
+
+    /**
+     * Cambio de precio masivo en UNA sola request — usado por
+     * ModalActualizarPrecios en Productos.jsx (tanto %/monto fijo como
+     * "Desde planilla"), que antes mandaba un PUT /productos/{id} por fila
+     * en lotes paralelos de a 8. Mismo motivo que bulkStore(): con el
+     * servidor de un solo hilo, una request con N filas es más rápida que N
+     * requests aunque se disparen en paralelo desde el cliente.
+     */
+    public function bulkUpdatePrecio(Request $request): JsonResponse
+    {
+        $empresaId = auth()->user()->empresa_id;
+        $items = $request->input('items', []);
+        if (!is_array($items) || empty($items)) {
+            return response()->json(['success' => false, 'message' => 'No se enviaron productos'], 422);
+        }
+
+        $ids = collect($items)->pluck('id')->filter()->unique()->values();
+        $productos = Producto::where('empresa_id', $empresaId)->whereIn('id', $ids)->get()->keyBy('id');
+
+        $actualizados = 0;
+        $ahora = now();
+        $historial = [];
+
+        DB::beginTransaction();
+        try {
+            foreach ($items as $item) {
+                $producto = $productos->get($item['id'] ?? null);
+                $nuevoPrecio = $item['precio'] ?? null;
+                if (!$producto || !is_numeric($nuevoPrecio) || $nuevoPrecio < 0) {
+                    continue;
+                }
+                $precioAnterior = (float) $producto->precio;
+                $nuevoPrecio = round((float) $nuevoPrecio, 2);
+                if ($nuevoPrecio === $precioAnterior) {
+                    continue;
+                }
+
+                $producto->precio = $nuevoPrecio;
+                $producto->save();
+
+                $historial[] = [
+                    'empresa_id'      => $empresaId,
+                    'id_producto'     => $producto->id,
+                    'campo'           => 'precio',
+                    'precio_anterior' => $precioAnterior,
+                    'precio_nuevo'    => $nuevoPrecio,
+                    'id_usuario'      => auth()->id(),
+                    'created_at'      => $ahora,
+                    'updated_at'      => $ahora,
+                ];
+                $actualizados++;
+            }
+            if ($historial) {
+                HistorialPrecio::insert($historial);
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Error al actualizar precios', 'error' => $e->getMessage()], 500);
+        }
+
+        if ($actualizados > 0) {
+            $this->clearListCache();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "{$actualizados} precio" . ($actualizados !== 1 ? 's' : '') . " actualizado" . ($actualizados !== 1 ? 's' : ''),
+            'data' => ['actualizados' => $actualizados],
+        ]);
+    }
+
     public function update(UpdateProductoRequest $request, $id): JsonResponse
     {
         $idSucursal = auth()->user()->id_sucursal;
