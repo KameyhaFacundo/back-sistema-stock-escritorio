@@ -11,6 +11,7 @@ use App\Models\DevolucionVentaLinea;
 use App\Models\Presupuesto;
 use App\Models\Producto;
 use App\Models\Cliente;
+use App\Models\MovimientoCaja;
 use App\Models\Turno;
 use App\Services\DevolucionVentaService;
 use App\Services\StockService;
@@ -326,6 +327,7 @@ class VentasController extends Controller
             // Revertir cobros de una venta fiado (pagos_cliente en efectivo van a la caja abierta al momento de cobrarlos)
             if ($venta->pagos->isNotEmpty()) {
                 $turnoActivo = null;
+                $nombreClientePago = $venta->loadMissing('cliente')->cliente?->persona;
                 foreach ($venta->pagos as $pago) {
                     if ($pago->metodo_pago === 'efectivo') {
                         $turnoActivo = $turnoActivo ?? $this->turnoService->activo(auth()->user()->nro_usu, auth()->user()->id_sucursal, lock: true);
@@ -336,8 +338,38 @@ class VentasController extends Controller
                         } else {
                             $cajaAjustada = false;
                         }
+                    } elseif ($pago->metodo_pago === 'transferencia') {
+                        // No hay contador propio que descontar (a diferencia de
+                        // efectivo_actual) — pero si no se revierte el ingreso que
+                        // cobrar() dejó en Movimientos, el "esperado por
+                        // transferencia" del turno (ver Caja.jsx) queda de más,
+                        // como si esta plata siguiera esperándose después de
+                        // anular la venta que la originó.
+                        $turnoActivo = $turnoActivo ?? $this->turnoService->activo(auth()->user()->nro_usu, auth()->user()->id_sucursal, lock: true);
+                        if ($turnoActivo) {
+                            MovimientoCaja::create([
+                                'id_turno' => $turnoActivo->id,
+                                'tipo'     => 'egreso',
+                                'metodo'   => 'transferencia',
+                                'monto'    => $pago->monto,
+                                'motivo'   => $nombreClientePago
+                                    ? "Reversión de cobro #{$venta->id} — {$nombreClientePago}"
+                                    : "Reversión de cobro #{$venta->id}",
+                                'hora'     => now()->format('H:i'),
+                            ]);
+                        } else {
+                            $cajaAjustada = false;
+                        }
                     }
-                    $pago->delete();
+                    // Marcado, no borrado — sin esto, anular una venta hacía
+                    // desaparecer para siempre la única prueba de que alguien
+                    // había cargado ese cobro (quién, cuándo, cuánto, con qué
+                    // nota). Queda visible, solo que marcado como anulado.
+                    $pago->update([
+                        'anulado'              => true,
+                        'id_usuario_anulacion' => auth()->user()->nro_usu,
+                        'fecha_anulacion'      => now(),
+                    ]);
                 }
             }
 

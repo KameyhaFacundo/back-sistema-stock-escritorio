@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Venta;
 use App\Models\MovimientoCaja;
 use App\Models\PagoCliente;
+use App\Jobs\SendComprobantePagoJob;
 use App\Services\TurnoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -202,10 +203,14 @@ class DeudasClientesController extends Controller
             'monto'       => 'required|numeric|min:0.01',
             'fecha'       => 'required|date',
             'metodo_pago' => 'nullable|string|max:50',
-            'nota'        => 'nullable|string|max:255',
+            // Antes era opcional — un cobro sin ninguna referencia (dónde/cómo
+            // se cobró) es mucho más fácil de inventar. No evita que alguien
+            // mienta, pero sube el costo de mentir y deja algo puntual para
+            // preguntar después si algo no cierra.
+            'nota'        => 'required|string|max:255',
         ]);
 
-        $venta = Venta::findOrFail($idVenta);
+        $venta = Venta::with('cliente')->findOrFail($idVenta);
 
         if ($venta->estado_pago === 'pagado') {
             return response()->json(['success' => false, 'message' => 'Esta venta ya está cobrada'], 400);
@@ -213,6 +218,7 @@ class DeudasClientesController extends Controller
 
         $saldo = (float)$venta->monto_total - (float)$venta->monto_cobrado;
         $monto = min((float)$request->monto, $saldo);
+        $metodoPago = $request->metodo_pago ?? 'efectivo';
 
         DB::beginTransaction();
         try {
@@ -221,7 +227,7 @@ class DeudasClientesController extends Controller
                 'id_usuario'  => auth()->user()->nro_usu,
                 'monto'       => $monto,
                 'fecha'       => substr($request->fecha, 0, 10),
-                'metodo_pago' => $request->metodo_pago ?? 'efectivo',
+                'metodo_pago' => $metodoPago,
                 'nota'        => $request->nota,
             ]);
 
@@ -229,20 +235,29 @@ class DeudasClientesController extends Controller
             $venta->estado_pago    = $venta->monto_cobrado >= $venta->monto_total ? 'pagado' : 'parcial';
             $venta->save();
 
-            // Si cobró en efectivo, sumar a la caja — y dejar un renglón en
-            // Movimientos (antes solo se sumaba al contador "ventas_efectivo",
-            // sin ningún rastro individual de qué cliente pagó qué).
-            if (($request->metodo_pago ?? 'efectivo') === 'efectivo') {
+            // Efectivo y transferencia dejan un renglón en Movimientos — plata
+            // que debería reflejarse en el cajón físico o en la cuenta del
+            // negocio. Tarjeta/QR no: van directo al procesador de pago, sin
+            // "arqueo" posible de nuestro lado (metodo de movimientos_caja
+            // solo admite efectivo/transferencia, ver esa migración). Antes
+            // esto solo pasaba para efectivo — una transferencia cobrada acá
+            // no dejaba NINGÚN rastro en Caja, así que declarar en falso
+            // "transferencia" para un cobro que en realidad fue en efectivo
+            // era invisible: no faltaba nada en ningún arqueo.
+            if (in_array($metodoPago, ['efectivo', 'transferencia'], true)) {
                 $turno = $this->turnoService->activo(auth()->user()->nro_usu, auth()->user()->id_sucursal, lock: true);
                 if ($turno) {
-                    $turno->efectivo_actual  += $monto;
-                    $turno->ventas_efectivo  += $monto;
-                    $turno->save();
+                    if ($metodoPago === 'efectivo') {
+                        $turno->efectivo_actual  += $monto;
+                        $turno->ventas_efectivo  += $monto;
+                        $turno->save();
+                    }
 
-                    $nombreCliente = $venta->loadMissing('cliente')->cliente?->persona;
+                    $nombreCliente = $venta->cliente?->persona;
                     MovimientoCaja::create([
                         'id_turno' => $turno->id,
                         'tipo'     => 'ingreso',
+                        'metodo'   => $metodoPago,
                         'monto'    => $monto,
                         'motivo'   => $nombreCliente
                             ? "Cobro de deuda #{$venta->id} — {$nombreCliente}"
@@ -253,6 +268,25 @@ class DeudasClientesController extends Controller
             }
 
             DB::commit();
+
+            // Recibo automático por mail — no depende de que el empleado se
+            // acuerde de avisarle al cliente (ni de que quiera hacerlo). Si el
+            // cliente nunca pagó esto, acá es donde se entera sin que nadie
+            // del local tenga que decírselo. Se manda DESPUÉS del commit (no
+            // tiene que poder tumbar el cobro si el mail falla) y solo si hay
+            // email cargado — no bloquea el cobro si no lo tiene.
+            if ($venta->cliente?->email) {
+                SendComprobantePagoJob::dispatch(
+                    $venta->cliente->email,
+                    $venta->cliente->persona,
+                    $monto,
+                    $metodoPago,
+                    substr($request->fecha, 0, 10),
+                    max(0, (float) $venta->monto_total - (float) $venta->monto_cobrado),
+                    auth()->user()->empresa?->nombre ?? config('app.name'),
+                    $venta->id,
+                );
+            }
 
             return response()->json([
                 'success' => true,

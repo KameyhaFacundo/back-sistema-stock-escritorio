@@ -59,7 +59,7 @@ class DeudasClientesControllerTest extends TestCase
         $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
 
         $response = $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
-            'monto' => 400, 'fecha' => now()->format('Y-m-d'),
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'), 'nota' => 'Pagó en el local',
         ]);
 
         $response->assertStatus(200);
@@ -76,7 +76,7 @@ class DeudasClientesControllerTest extends TestCase
         $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 800);
 
         $response = $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
-            'monto' => 500, 'fecha' => now()->format('Y-m-d'),
+            'monto' => 500, 'fecha' => now()->format('Y-m-d'), 'nota' => 'Pagó en el local',
         ]);
 
         $response->assertStatus(200);
@@ -99,7 +99,7 @@ class DeudasClientesControllerTest extends TestCase
         ]);
 
         $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
-            'monto' => 400, 'fecha' => now()->format('Y-m-d'),
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'), 'nota' => 'Pagó en el local',
         ])->assertStatus(200);
 
         $movimiento = \App\Models\MovimientoCaja::where('monto', 400)->where('tipo', 'ingreso')->first();
@@ -114,7 +114,7 @@ class DeudasClientesControllerTest extends TestCase
         $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 1000);
 
         $response = $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
-            'monto' => 100, 'fecha' => now()->format('Y-m-d'),
+            'monto' => 100, 'fecha' => now()->format('Y-m-d'), 'nota' => 'Pagó en el local',
         ]);
 
         $response->assertStatus(400);
@@ -126,10 +126,10 @@ class DeudasClientesControllerTest extends TestCase
         [$empresa, $sucursal, , $cliente, $headers] = $this->armarEscenario(['update-ventas', 'list-clientes']);
         $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
         $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
-            'monto' => 300, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'efectivo',
+            'monto' => 300, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'efectivo', 'nota' => 'Efectivo en el local',
         ])->assertStatus(200);
         $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
-            'monto' => 200, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'transferencia',
+            'monto' => 200, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'transferencia', 'nota' => 'Transferencia bancaria',
         ])->assertStatus(200);
 
         $response = $this->withHeaders($headers)->getJson('/api/v1/deudas-clientes/resumen');
@@ -201,5 +201,120 @@ class DeudasClientesControllerTest extends TestCase
         // Vuelve a 2 × 100 (precio_original) = 200, ya cobrado 100 -> parcial.
         $this->assertEquals(200, (float) $venta->fresh()->monto_total);
         $this->assertEquals('parcial', $venta->fresh()->estado_pago);
+    }
+
+    // Un cobro sin ninguna referencia es mucho más fácil de inventar — ver el
+    // comentario en DeudasClientesController::cobrar.
+    public function test_cobrar_rechaza_sin_nota(): void
+    {
+        [$empresa, $sucursal, , $cliente, $headers] = $this->armarEscenario(['update-ventas']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+
+        $response = $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'),
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertEquals(0, (float) $venta->fresh()->monto_cobrado);
+    }
+
+    // Antes, un cobro por transferencia no dejaba NINGÚN rastro en Caja — así
+    // que declarar en falso "transferencia" para un cobro que en realidad fue
+    // en efectivo era invisible en cualquier arqueo.
+    public function test_cobrar_por_transferencia_deja_movimiento_sin_tocar_efectivo(): void
+    {
+        [$empresa, $sucursal, , $cliente, $headers, $usuario] = $this->armarEscenario(['update-ventas']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'fecha' => now()->toDateString(), 'hora_apertura' => '09:00',
+            'monto_inicial' => 500, 'efectivo_actual' => 500, 'ventas_efectivo' => 0,
+        ]);
+
+        $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'transferencia', 'nota' => 'Transferencia bancaria',
+        ])->assertStatus(200);
+
+        $movimiento = \App\Models\MovimientoCaja::where('monto', 400)->where('tipo', 'ingreso')->first();
+        $this->assertNotNull($movimiento);
+        $this->assertEquals('transferencia', $movimiento->metodo);
+        $this->assertEquals(500, (float) \App\Models\Turno::first()->efectivo_actual);
+    }
+
+    // El recibo automático es lo único que no depende de que el empleado
+    // quiera avisarle al cliente — ver ComprobantePagoMail.
+    public function test_cobrar_manda_comprobante_por_mail_si_el_cliente_tiene_email(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        [$empresa, $sucursal, , , $headers] = $this->armarEscenario(['update-ventas']);
+        $cliente = Cliente::create(['empresa_id' => $empresa->id, 'persona' => 'Cliente Con Mail', 'estado' => true, 'puntos' => 0, 'email' => 'cliente@test.com']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+
+        $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'), 'nota' => 'Pagó en el local',
+        ])->assertStatus(200);
+
+        \Illuminate\Support\Facades\Mail::assertSent(\App\Mail\ComprobantePagoMail::class, fn ($mail) => $mail->hasTo('cliente@test.com'));
+    }
+
+    // Sin email cargado, el cobro tiene que seguir funcionando igual — no
+    // debe bloquearse por no tener a quién mandarle el comprobante.
+    public function test_cobrar_no_falla_si_el_cliente_no_tiene_email(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        [$empresa, $sucursal, , $cliente, $headers] = $this->armarEscenario(['update-ventas']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+
+        $response = $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'), 'nota' => 'Pagó en el local',
+        ]);
+
+        $response->assertStatus(200);
+        \Illuminate\Support\Facades\Mail::assertNothingSent();
+    }
+
+    // Anular una venta con un cobro ya registrado NO debe borrar el registro
+    // del pago — antes desaparecía sin dejar rastro de que había existido.
+    public function test_anular_venta_marca_el_pago_como_anulado_en_vez_de_borrarlo(): void
+    {
+        [$empresa, $sucursal, , $cliente, $headers, $usuario] = $this->armarEscenario(['update-ventas', 'anular-ventas']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+        $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'), 'nota' => 'Pagó en el local',
+        ])->assertStatus(200);
+        $pago = \App\Models\PagoCliente::where('id_venta', $venta->id)->firstOrFail();
+
+        $response = $this->withHeaders($headers)->postJson("/api/v1/ventas/{$venta->id}/anular");
+
+        $response->assertStatus(200);
+        $this->assertDatabaseHas('pagos_cliente', ['id' => $pago->id]);
+        $pagoFresco = $pago->fresh();
+        $this->assertTrue($pagoFresco->anulado);
+        $this->assertEquals($usuario->nro_usu, $pagoFresco->id_usuario_anulacion);
+        $this->assertNotNull($pagoFresco->fecha_anulacion);
+    }
+
+    // Un cobro por transferencia que se anula tiene que revertir el
+    // "esperado por transferencia" del turno (ver arqueo en Caja.jsx) — sin
+    // esto, la plata seguía contando como si la venta anulada nunca se
+    // hubiera revertido.
+    public function test_anular_venta_con_cobro_por_transferencia_revierte_el_movimiento(): void
+    {
+        [$empresa, $sucursal, , $cliente, $headers, $usuario] = $this->armarEscenario(['update-ventas', 'anular-ventas']);
+        $venta = $this->ventaConDeuda($empresa, $sucursal, $cliente, 1000, 0);
+        Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'fecha' => now()->toDateString(), 'hora_apertura' => '09:00',
+            'monto_inicial' => 500, 'efectivo_actual' => 500, 'ventas_efectivo' => 0,
+        ]);
+        $this->withHeaders($headers)->postJson("/api/v1/deudas-clientes/{$venta->id}/cobrar", [
+            'monto' => 400, 'fecha' => now()->format('Y-m-d'), 'metodo_pago' => 'transferencia', 'nota' => 'Transferencia bancaria',
+        ])->assertStatus(200);
+
+        $this->withHeaders($headers)->postJson("/api/v1/ventas/{$venta->id}/anular")->assertStatus(200);
+
+        $reversion = \App\Models\MovimientoCaja::where('tipo', 'egreso')->where('metodo', 'transferencia')->where('monto', 400)->first();
+        $this->assertNotNull($reversion);
+        $this->assertStringContainsString((string) $venta->id, $reversion->motivo);
     }
 }
