@@ -10,6 +10,7 @@ use App\Models\HistorialPrecio;
 use App\Models\LineaCompra;
 use App\Models\MovimientoCaja;
 use App\Models\MovimientoStock;
+use App\Models\PagoProveedor;
 use App\Models\Producto;
 use App\Models\Proveedor;
 use App\Services\DevolucionCompraService;
@@ -80,19 +81,32 @@ class ComprasController extends Controller
     }
 
     /**
-     * Ajusta el efectivo del turno abierto por una compra en efectivo, con el
-     * mismo gate que el stock (solo se mueve caja cuando la compra pasa a
-     * "confirmada", y se revierte cuando sale de "confirmada"/se borra) —
-     * antes esto restaba efectivo_actual directamente en store() sin importar
-     * el estado, sin dejar ningún renglón en Caja > Movimientos, y nunca se
-     * revertía al editar/cancelar/borrar la compra.
+     * Ajusta el efectivo del turno abierto por una compra, con el mismo gate
+     * que el stock (solo se mueve caja cuando la compra pasa a "confirmada",
+     * y se revierte cuando sale de "confirmada"/se borra) — antes esto restaba
+     * efectivo_actual directamente en store() sin importar el estado, sin
+     * dejar ningún renglón en Caja > Movimientos, y nunca se revertía al
+     * editar/cancelar/borrar la compra.
      *
-     * $monto negativo = egreso (se gastó plata real), positivo = ingreso
-     * (se revierte una compra que ya había restado efectivo).
+     * La porción REAL en efectivo no siempre es compra->monto_total, aunque
+     * compra->metodo_pago sea "efectivo": con pago dividido (ver 'pagos' en
+     * store()) una compra puede tener parte en efectivo y parte en otro
+     * método o en cuenta corriente. Se lee de pagos_proveedor cuando hay
+     * desglose real ahí; para compras "clásicas" sin desglose (todo el
+     * historial anterior a esta función), se cae al criterio de siempre:
+     * compra->monto_total completo cuando metodo_pago es literalmente
+     * "efectivo" — así ninguna compra vieja cambia de comportamiento.
+     *
+     * $signo: -1 al cargar (compra nueva/recién confirmada, sale plata),
+     * +1 al revertir (anular/eliminar/reversión, vuelve plata).
      */
-    private function ajustarCajaCompra(Compra $compra, int $idSucursal, float $monto, string $motivoPrefijo): void
+    private function ajustarCajaCompra(Compra $compra, int $idSucursal, int $signo, string $motivoPrefijo): void
     {
-        if ($compra->metodo_pago !== 'efectivo' || $monto == 0.0) return;
+        $montoEfectivo = (float) $compra->pagos()->where('metodo_pago', 'efectivo')->sum('monto');
+        if ($montoEfectivo == 0.0 && $compra->metodo_pago === 'efectivo') {
+            $montoEfectivo = (float) $compra->monto_total;
+        }
+        if ($montoEfectivo == 0.0) return;
 
         // lockForUpdate: mismo motivo que en VentaCreacionService/CajaController —
         // efectivo_actual se lee y se vuelve a escribir más abajo, sin lock una
@@ -102,6 +116,7 @@ class ComprasController extends Controller
 
         $compra->loadMissing('proveedor');
         $nombreProveedor = $compra->proveedor?->persona;
+        $monto = $signo * $montoEfectivo;
 
         MovimientoCaja::create([
             'id_turno' => $turnoActivo->id,
@@ -218,11 +233,23 @@ class ComprasController extends Controller
                 }
             }
 
-            $montoTotal  = collect($request->lineas)->sum(fn($l) => $l['precio_compra'] * $l['cantidad']);
-            $metodoPago  = $request->metodo_pago ?? 'efectivo';
-            $esCredito   = $metodoPago === 'cuenta_corriente';
-            $estadoDeuda = $esCredito ? 'pendiente' : 'pagado';
-            $montoPagado = $esCredito ? 0 : $montoTotal;
+            $montoTotal = collect($request->lineas)->sum(fn($l) => $l['precio_compra'] * $l['cantidad']);
+
+            // Desglose real de "varios métodos" (mismo patrón que 'pagos' en
+            // VentaCreacionService/PagoVenta, ver CreateCompraRequest) — cuánto se
+            // paga AHORA y con qué método(s). Sin desglose, se preserva el
+            // comportamiento de siempre: "cuenta_corriente" = nada pagado,
+            // cualquier otro método = 100% pagado. Lo que falte para llegar a
+            // montoTotal queda como saldo en cuenta corriente con el proveedor
+            // (mismo mecanismo que ya usa DeudasController::pagar() después).
+            $pagos       = $request->pagos;
+            $metodoPago  = $pagos ? ($pagos[0]['metodo'] ?? 'efectivo') : ($request->metodo_pago ?? 'efectivo');
+            $montoPagado = $pagos !== null
+                ? min($montoTotal, collect($pagos)->sum('monto'))
+                : ($metodoPago === 'cuenta_corriente' ? 0 : $montoTotal);
+            $estadoDeuda = $montoPagado <= 0
+                ? 'pendiente'
+                : ($montoPagado >= $montoTotal ? 'pagado' : 'parcial');
             $estado      = $request->estado ?? 'confirmada';
 
             $compra = Compra::create([
@@ -237,6 +264,24 @@ class ComprasController extends Controller
                 'monto_total'  => $montoTotal,
                 'cuit'         => $proveedor->cuit,
             ]);
+
+            // Guarda cada línea del desglose en pagos_proveedor — sin esto,
+            // DeudasController::resumen() (que suma por método desde ahí) y
+            // ajustarCajaCompra() (que necesita saber cuánto fue REALMENTE en
+            // efectivo) no tendrían de dónde leer la porción pagada ahora.
+            if ($pagos) {
+                foreach ($pagos as $pago) {
+                    $monto = (float) $pago['monto'];
+                    if ($monto <= 0) continue;
+                    PagoProveedor::create([
+                        'id_compra'   => $compra->id,
+                        'id_usuario'  => auth()->user()->nro_usu,
+                        'monto'       => $monto,
+                        'fecha'       => substr($request->fecha, 0, 10),
+                        'metodo_pago' => $pago['metodo'],
+                    ]);
+                }
+            }
 
             foreach ($request->lineas as $linea) {
                 LineaCompra::create([
@@ -256,7 +301,7 @@ class ComprasController extends Controller
             }
 
             if ($estado === 'confirmada') {
-                $this->ajustarCajaCompra($compra, $idSucursal, -$montoTotal, 'Compra');
+                $this->ajustarCajaCompra($compra, $idSucursal, -1, 'Compra');
             }
 
             DB::commit();
@@ -343,7 +388,7 @@ class ComprasController extends Controller
                             $this->registrarMovimientoCompra($prod, -$linea->cantidad, $compra->id, $idSucursal);
                         }
                     }
-                    $this->ajustarCajaCompra($compra, $idSucursal, (float) $compra->monto_total, 'Reversión de compra');
+                    $this->ajustarCajaCompra($compra, $idSucursal, 1, 'Reversión de compra');
                 }
 
                 $compra->lineas()->delete();
@@ -377,7 +422,7 @@ class ComprasController extends Controller
                 }
                 $compra->monto_total = $montoTotal;
                 if ($estadoNuevo === 'confirmada') {
-                    $this->ajustarCajaCompra($compra, $idSucursal, -$montoTotal, 'Compra');
+                    $this->ajustarCajaCompra($compra, $idSucursal, -1, 'Compra');
                 }
 
             } elseif ($request->has('estado') && $request->estado !== $estadoAnterior) {
@@ -397,9 +442,9 @@ class ComprasController extends Controller
                     }
                 }
                 if ($estadoNuevo === 'confirmada') {
-                    $this->ajustarCajaCompra($compra, $idSucursal, -(float) $compra->monto_total, 'Compra');
+                    $this->ajustarCajaCompra($compra, $idSucursal, -1, 'Compra');
                 } elseif ($estadoAnterior === 'confirmada') {
-                    $this->ajustarCajaCompra($compra, $idSucursal, (float) $compra->monto_total, 'Reversión de compra');
+                    $this->ajustarCajaCompra($compra, $idSucursal, 1, 'Reversión de compra');
                 }
             }
 
@@ -437,7 +482,7 @@ class ComprasController extends Controller
                         $this->registrarMovimientoCompra($prod, -$linea->cantidad, $compra->id, $idSucursal);
                     }
                 }
-                $this->ajustarCajaCompra($compra, $idSucursal, (float) $compra->monto_total, 'Reversión de compra (eliminada)');
+                $this->ajustarCajaCompra($compra, $idSucursal, 1, 'Reversión de compra (eliminada)');
             }
 
             $compra->delete();
@@ -481,9 +526,9 @@ class ComprasController extends Controller
                     }
                 }
                 if ($estadoNuevo === 'confirmada') {
-                    $this->ajustarCajaCompra($compra, $idSucursal, -(float) $compra->monto_total, 'Compra');
+                    $this->ajustarCajaCompra($compra, $idSucursal, -1, 'Compra');
                 } elseif ($estadoAnterior === 'confirmada') {
-                    $this->ajustarCajaCompra($compra, $idSucursal, (float) $compra->monto_total, 'Reversión de compra');
+                    $this->ajustarCajaCompra($compra, $idSucursal, 1, 'Reversión de compra');
                 }
             }
 

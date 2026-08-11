@@ -18,6 +18,14 @@ class CreateCompraRequest extends FormRequest
             'id_proveedor' => 'required|exists:proveedores,id',
             'fecha'        => 'required|date',
             'metodo_pago'  => 'nullable|string|max:50',
+            // Desglose real de "varios métodos" (mismo patrón que 'pagos' en
+            // CreateVentaRequest) — si la suma no cubre el total, el resto queda
+            // de saldo en cuenta corriente con el proveedor (pago parcial). Sin
+            // esto, se preserva el comportamiento de siempre: pagado 100% salvo
+            // que metodo_pago sea "cuenta_corriente" (0% pagado).
+            'pagos'                => 'nullable|array',
+            'pagos.*.metodo'       => 'required_with:pagos|string|max:50',
+            'pagos.*.monto'        => 'required_with:pagos|numeric|min:0',
             'estado'       => 'nullable|in:pendiente,confirmada,cancelada',
             'lineas' => 'required|array|min:1',
             'lineas.*.id_producto' => 'required|exists:productos,id',

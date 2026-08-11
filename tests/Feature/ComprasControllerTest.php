@@ -113,6 +113,117 @@ class ComprasControllerTest extends TestCase
         $this->assertStringContainsString('Distribuidora Test', $movimiento->motivo);
     }
 
+    // Pago dividido (ver 'pagos' en CreateCompraRequest) — parte ahora, el
+    // resto queda de saldo en cuenta corriente con el proveedor.
+    public function test_store_con_pago_dividido_deja_saldo_parcial(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['create-compras']);
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Test']);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $producto  = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto Test',
+            'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/compras', [
+                'id_proveedor' => $proveedor->id,
+                'fecha' => now()->format('Y-m-d'),
+                'pagos' => [
+                    ['metodo' => 'efectivo', 'monto' => 300],
+                    ['metodo' => 'transferencia', 'monto' => 200],
+                ],
+                'lineas' => [
+                    ['id_producto' => $producto->id, 'precio_compra' => 100, 'cantidad' => 10],
+                ],
+            ]);
+
+        $response->assertStatus(201);
+        $compra = Compra::find($response->json('data.id'));
+        $this->assertEquals('parcial', $compra->estado_deuda);
+        $this->assertEquals(500, (float) $compra->monto_pagado);
+        $this->assertEquals(500, (float) $compra->monto_total - (float) $compra->monto_pagado);
+        $this->assertDatabaseHas('pagos_proveedor', ['id_compra' => $compra->id, 'metodo_pago' => 'efectivo', 'monto' => 300]);
+        $this->assertDatabaseHas('pagos_proveedor', ['id_compra' => $compra->id, 'metodo_pago' => 'transferencia', 'monto' => 200]);
+    }
+
+    // Con pago dividido, solo la porción REALMENTE en efectivo tiene que
+    // entrar al arqueo — antes de este cambio, ajustarCajaCompra() confiaba
+    // en compra->metodo_pago == "efectivo" para mover TODO monto_total, lo
+    // cual hubiera inflado el cajón con la parte en transferencia también.
+    public function test_pago_dividido_solo_la_porcion_efectivo_entra_al_arqueo(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['create-compras']);
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Test']);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $producto  = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto Test',
+            'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+        \App\Models\Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'fecha' => now()->toDateString(), 'hora_apertura' => '09:00',
+            'monto_inicial' => 1000, 'efectivo_actual' => 1000, 'ventas_efectivo' => 0,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->postJson('/api/v1/compras', [
+                'id_proveedor' => $proveedor->id,
+                'fecha' => now()->format('Y-m-d'),
+                'pagos' => [
+                    ['metodo' => 'transferencia', 'monto' => 600],
+                    ['metodo' => 'efectivo', 'monto' => 400],
+                ],
+                'lineas' => [
+                    ['id_producto' => $producto->id, 'precio_compra' => 100, 'cantidad' => 10],
+                ],
+            ]);
+
+        $response->assertStatus(201);
+        $movimiento = \App\Models\MovimientoCaja::where('tipo', 'egreso')->first();
+        $this->assertNotNull($movimiento);
+        $this->assertEquals(400, (float) $movimiento->monto);
+        $this->assertEquals(600, (float) \App\Models\Turno::first()->efectivo_actual);
+    }
+
+    // Anular una compra con pago dividido devuelve solo la parte que
+    // realmente había salido en efectivo, no monto_total entero.
+    public function test_anular_compra_con_pago_dividido_revierte_solo_la_porcion_efectivo(): void
+    {
+        [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos(['create-compras', 'change-status-compras']);
+        $proveedor = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor Test']);
+        $categoria = Categoria::create(['empresa_id' => $empresa->id, 'categoria' => 'General']);
+        $producto  = Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Producto Test',
+            'precio' => 100, 'id_categoria' => $categoria->id,
+        ]);
+        \App\Models\Turno::create([
+            'empresa_id' => $empresa->id, 'id_sucursal' => $sucursal->id, 'id_usuario' => $usuario->nro_usu,
+            'estado' => 'abierta', 'fecha' => now()->toDateString(), 'hora_apertura' => '09:00',
+            'monto_inicial' => 1000, 'efectivo_actual' => 1000, 'ventas_efectivo' => 0,
+        ]);
+        $headers = ['Authorization' => "Bearer {$token}"];
+
+        $creada = $this->withHeaders($headers)->postJson('/api/v1/compras', [
+            'id_proveedor' => $proveedor->id,
+            'fecha' => now()->format('Y-m-d'),
+            'pagos' => [
+                ['metodo' => 'efectivo', 'monto' => 400],
+                ['metodo' => 'transferencia', 'monto' => 600],
+            ],
+            'lineas' => [
+                ['id_producto' => $producto->id, 'precio_compra' => 100, 'cantidad' => 10],
+            ],
+        ]);
+        $idCompra = $creada->json('data.id');
+        $this->assertEquals(600, (float) \App\Models\Turno::first()->efectivo_actual); // 1000 - 400
+
+        $response = $this->withHeaders($headers)->putJson("/api/v1/compras/{$idCompra}/change-status", ['estado' => 'cancelada']);
+
+        $response->assertStatus(200);
+        $this->assertEquals(1000, (float) \App\Models\Turno::first()->efectivo_actual); // vuelve el efectivo, no los 1000+600 de transferencia
+    }
+
     public function test_subir_comprobante_requiere_permiso(): void
     {
         [$usuario, $empresa, $sucursal, $token] = $this->usuarioConPermisos([]);
