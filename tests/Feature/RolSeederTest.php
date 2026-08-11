@@ -11,8 +11,8 @@ use Tests\TestCase;
 /**
  * Rol básico "Usuario" (cajero): vende en el POS, consulta clientes y
  * productos, opera su caja e imprime etiquetas — sin Compras, Movimientos,
- * Proveedores, Usuarios ni Configuración, sin montos/historial de caja, sin
- * más pestañas del dashboard que "Resumen", y sin poder tocar precios ni
+ * Proveedores, Usuarios, Configuración NI Reportes/Dashboard (ni siquiera
+ * "Resumen"), sin montos/historial de caja, y sin poder tocar precios ni
  * aplicar descuentos (reservado para gerente/admin).
  */
 class RolSeederTest extends TestCase
@@ -31,7 +31,6 @@ class RolSeederTest extends TestCase
         $codigos = $this->permisosDelRol('usuario')->sort()->values();
 
         $esperados = [
-            'view-dashboard',
             'list-ventas', 'view-ventas', 'create-ventas',
             'list-caja', 'create-caja', 'update-caja',
             'list-categorias', 'view-categorias',
@@ -61,7 +60,7 @@ class RolSeederTest extends TestCase
     {
         $codigos = $this->permisosDelRol('usuario');
 
-        foreach (['aplicar-descuento-ventas', 'ver-montos-caja', 'list-historial-caja', 'view-dashboard-completo'] as $codigo) {
+        foreach (['aplicar-descuento-ventas', 'ver-montos-caja', 'list-historial-caja', 'view-dashboard-completo', 'view-dashboard'] as $codigo) {
             $this->assertNotContains($codigo, $codigos, "El rol usuario no debería tener '{$codigo}'");
         }
     }

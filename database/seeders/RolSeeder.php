@@ -34,18 +34,21 @@ class RolSeeder extends Seeder
 
         // Permisos operativos del día a día (cajero): vende en el POS, consulta
         // clientes y productos, opera la caja de su turno e imprime etiquetas
-        // — sin acceso a Compras, Movimientos, Proveedores, Usuarios ni
-        // Configuración, y sin ver montos de caja/historial ni más pestañas del
-        // dashboard que el resumen (ver comentarios puntuales abajo).
+        // — sin acceso a Compras, Movimientos, Proveedores, Usuarios,
+        // Configuración NI Reportes/Dashboard (a pedido explícito: ese rol no
+        // tiene que ver ninguna pestaña de ahí, ni siquiera "Resumen"), y sin
+        // ver montos de caja/historial (ver comentarios puntuales abajo).
+        //
+        // Sacar view-dashboard acá también cambia a dónde aterriza este rol
+        // al loguearse — antes /dashboard estaba hardcodeado como destino
+        // universal post-login en Login.jsx/OAuthCallback.jsx/PrivateRoute.jsx
+        // (asumiendo que todo rol logueado lo tiene habilitado); ahora esos
+        // tres puntos prueban una lista de rutas en orden y usan la primera
+        // a la que el rol SÍ tiene acceso — para "usuario" es /pos (ver
+        // primeraRutaDisponible en useHasPermiso.jsx del front). Sin ese
+        // cambio del lado del front, sacar este permiso solo hubiera dejado
+        // a este rol sin poder entrar a la app después de loguearse.
         $permisosUsuario = Permiso::whereIn('codigo', [
-            // Imprescindible: tanto el login como el registro navegan a /dashboard
-            // apenas se entra, y esa ruta exige este permiso — sin él, cualquier
-            // cuenta con este rol queda bloqueada apenas inicia sesión. Sin
-            // view-dashboard-completo, esa pantalla le muestra solo "Resumen" —
-            // Ventas/Compras/Productos/Métodos de pago/Historial de Caja quedan
-            // afuera (mismo detalle que exponen esas secciones enteras, sin
-            // acceso propio a algunas de ellas).
-            'view-dashboard',
             // Ventas (POS) — sin aplicar-descuento-ventas a propósito: ni el
             // precio del carrito ni un descuento/recargo global, ver
             // ValidaPreciosLinea. Reservado para gerente/admin.
