@@ -131,6 +131,54 @@ class ProductosControllerTest extends TestCase
         $this->assertEquals('De proveedor A', $data[0]['producto']);
     }
 
+    public function test_index_incluir_sin_proveedor_suma_los_que_no_tienen_ninguno(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        $proveedorA = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor A']);
+        $proveedorB = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor B']);
+        Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'De proveedor A', 'precio' => 100,
+            'id_categoria' => $categoria->id, 'id_proveedor' => $proveedorA->id,
+        ]);
+        Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'De proveedor B', 'precio' => 100,
+            'id_categoria' => $categoria->id, 'id_proveedor' => $proveedorB->id,
+        ]);
+        Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Sin proveedor', 'precio' => 100,
+            'id_categoria' => $categoria->id,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson("/api/v1/productos?id_proveedor={$proveedorA->id}&incluir_sin_proveedor=1");
+
+        $nombres = collect($response->json('data.data'))->pluck('producto');
+        $this->assertTrue($nombres->contains('De proveedor A'));
+        $this->assertTrue($nombres->contains('Sin proveedor'));
+        $this->assertFalse($nombres->contains('De proveedor B'));
+    }
+
+    public function test_index_sin_incluir_sin_proveedor_no_suma_los_que_no_tienen_ninguno(): void
+    {
+        [, $empresa, $token, , $categoria] = $this->usuarioConCatalogo();
+        $proveedorA = Proveedor::create(['empresa_id' => $empresa->id, 'persona' => 'Proveedor A']);
+        Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'De proveedor A', 'precio' => 100,
+            'id_categoria' => $categoria->id, 'id_proveedor' => $proveedorA->id,
+        ]);
+        Producto::create([
+            'empresa_id' => $empresa->id, 'producto' => 'Sin proveedor', 'precio' => 100,
+            'id_categoria' => $categoria->id,
+        ]);
+
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->getJson("/api/v1/productos?id_proveedor={$proveedorA->id}");
+
+        $nombres = collect($response->json('data.data'))->pluck('producto');
+        $this->assertTrue($nombres->contains('De proveedor A'));
+        $this->assertFalse($nombres->contains('Sin proveedor'));
+    }
+
     public function test_index_filtra_por_stock_bajo(): void
     {
         [, $empresa, $token, $sucursal, $categoria] = $this->usuarioConCatalogo();

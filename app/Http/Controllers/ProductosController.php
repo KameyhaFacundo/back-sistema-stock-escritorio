@@ -87,7 +87,7 @@ class ProductosController extends Controller
         $empresaId  = auth()->user()->empresa_id;
         $idSucursal = $this->sucursalDeRequest($request);
         $version    = Cache::get("productos:list:version:{$empresaId}", 1);
-        $paramsCacheables = ['search', 'id_categoria', 'estado', 'per_page', 'id_proveedor', 'stock_bajo', 'vencimiento_proximo', 'es_combo', 'tiene_variantes', 'codigo_exacto', 'sort', 'dir', 'page'];
+        $paramsCacheables = ['search', 'id_categoria', 'estado', 'per_page', 'id_proveedor', 'incluir_sin_proveedor', 'stock_bajo', 'vencimiento_proximo', 'es_combo', 'tiene_variantes', 'codigo_exacto', 'sort', 'dir', 'page'];
         $cacheKey   = "productos:list:{$empresaId}:v{$version}:" . md5(json_encode($request->only($paramsCacheables) + ['id_sucursal' => $idSucursal]));
 
         $productos = Cache::remember($cacheKey, 300, function () use ($request, $idSucursal) {
@@ -137,11 +137,22 @@ class ProductosController extends Controller
             // Filtra por proveedor principal O alternativo — un producto tiene que
             // aparecer en la lista de "sus" productos aunque este proveedor no sea
             // el principal, si no queda invisible desde ese lado de la relación.
+            // incluir_sin_proveedor (usado por el buscador de Nueva Compra): además
+            // de "sus" productos, suma los que no tienen NINGÚN proveedor cargado —
+            // no hay motivo para esconderlos solo porque ya elegiste un proveedor
+            // para esta compra puntual. No se aplica al filtro de la propia página
+            // Productos (ese sí tiene que mostrar solo lo vinculado a ese proveedor).
             if ($request->filled('id_proveedor')) {
                 $idProveedor = $request->id_proveedor;
-                $query->where(function ($q) use ($idProveedor) {
+                $incluirSinProveedor = $request->boolean('incluir_sin_proveedor');
+                $query->where(function ($q) use ($idProveedor, $incluirSinProveedor) {
                     $q->where('id_proveedor', $idProveedor)
                       ->orWhereHas('proveedoresAlternativos', fn ($q2) => $q2->whereKey($idProveedor));
+                    if ($incluirSinProveedor) {
+                        $q->orWhere(function ($q2) {
+                            $q2->whereNull('id_proveedor')->whereDoesntHave('proveedoresAlternativos');
+                        });
+                    }
                 });
             }
 
