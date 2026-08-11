@@ -32,29 +32,33 @@ class RolSeeder extends Seeder
             ]
         );
 
-        // Permisos operativos del día a día (vendedor): puede operar caja, cargar
-        // ventas/compras/movimientos y consultar clientes/proveedores/productos,
-        // pero no gestiona usuarios/roles/permisos, no elimina nada, y no puede
-        // modificar ni anular ventas ya cerradas (eso queda para gerente/admin).
+        // Permisos operativos del día a día (cajero): vende en el POS, consulta
+        // clientes y productos, opera la caja de su turno e imprime etiquetas
+        // — sin acceso a Compras, Movimientos, Proveedores, Usuarios ni
+        // Configuración, y sin ver montos de caja/historial ni más pestañas del
+        // dashboard que el resumen (ver comentarios puntuales abajo).
         $permisosUsuario = Permiso::whereIn('codigo', [
             // Imprescindible: tanto el login como el registro navegan a /dashboard
             // apenas se entra, y esa ruta exige este permiso — sin él, cualquier
-            // cuenta con este rol queda bloqueada apenas inicia sesión.
+            // cuenta con este rol queda bloqueada apenas inicia sesión. Sin
+            // view-dashboard-completo, esa pantalla le muestra solo "Resumen" —
+            // Ventas/Compras/Productos/Métodos de pago/Historial de Caja quedan
+            // afuera (mismo detalle que exponen esas secciones enteras, sin
+            // acceso propio a algunas de ellas).
             'view-dashboard',
-            // Movimientos de stock
-            'list-movimientos',
-            'create-movimientos',
-            // Ventas
+            // Ventas (POS) — sin aplicar-descuento-ventas a propósito: ni el
+            // precio del carrito ni un descuento/recargo global, ver
+            // ValidaPreciosLinea. Reservado para gerente/admin.
             'list-ventas',
             'view-ventas',
             'create-ventas',
-            // Caja
+            // Caja — sin list-historial-caja (solo su turno actual, no el de
+            // otros cajeros) ni ver-montos-caja (arqueo ciego: no ve los montos
+            // hasta cargar su propio conteo al cerrar, ver CajaController).
             'list-caja',
             'create-caja',
             'update-caja',
-            'list-historial-caja',
-            'ver-montos-caja',
-            // Categorías (solo lectura)
+            // Categorías (solo lectura, para poder navegar productos)
             'list-categorias',
             'view-categorias',
             // Clientes
@@ -62,26 +66,16 @@ class RolSeeder extends Seeder
             'view-clientes',
             'create-clientes',
             'update-clientes',
-            // Compras
-            'list-compras',
-            'view-compras',
-            'create-compras',
-            'update-compras',
-            'change-status-compras',
-            // devolver-compras queda afuera a propósito: una devolución de
-            // compra baja el stock de forma "legítima" — es la tapadera
-            // perfecta para encubrir un robo (el producto se lo queda el
-            // empleado y el conteo cierra igual). Mismo criterio que
-            // anular-ventas/aplicar-descuento-ventas, ya reservados para
-            // gerente/admin.
-            // Productos (solo lectura)
+            // Productos: solo listar/ver — nada de crear, editar, eliminar,
+            // "Promoción" ni "Actualizar precios" (ver gestionarProductos en
+            // useHasPermiso.jsx, que gatea todo eso del lado del front).
             'list-productos',
             'view-productos',
-            // Proveedores
-            'list-proveedores',
-            'view-proveedores',
-            'create-proveedores',
-            'update-proveedores',
+            // Etiquetas de precio
+            'view-etiquetas',
+            'print-etiquetas',
+            // Compras, Movimientos, Proveedores, Usuarios y Configuración quedan
+            // completamente afuera — no hay ningún codigo de esos grupos acá.
         ])->pluck('id');
         $usuario->permisos()->sync($permisosUsuario);
 

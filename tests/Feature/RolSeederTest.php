@@ -9,42 +9,68 @@ use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
 
 /**
- * devolver-compras salió del rol básico "Usuario" (vendedor) — una
- * devolución de compra baja el stock de forma "legítima", tapadera
- * perfecta para encubrir un robo. Mismo criterio que ya reservaba
- * anular-ventas/aplicar-descuento-ventas para gerente/admin.
+ * Rol básico "Usuario" (cajero): vende en el POS, consulta clientes y
+ * productos, opera su caja e imprime etiquetas — sin Compras, Movimientos,
+ * Proveedores, Usuarios ni Configuración, sin montos/historial de caja, sin
+ * más pestañas del dashboard que "Resumen", y sin poder tocar precios ni
+ * aplicar descuentos (reservado para gerente/admin).
  */
 class RolSeederTest extends TestCase
 {
     use DatabaseTransactions;
 
-    public function test_rol_usuario_no_incluye_devolver_compras(): void
+    private function permisosDelRol(string $codigoRol): \Illuminate\Support\Collection
     {
         (new RolSeeder())->run();
 
-        $rolUsuario = Rol::where('codigo', 'usuario')->firstOrFail();
-        $idDevolverCompras = Permiso::where('codigo', 'devolver-compras')->value('id');
-
-        $this->assertFalse(
-            $rolUsuario->permisos()->where('permisos.id', $idDevolverCompras)->exists(),
-            'devolver-compras no debería estar en el rol básico'
-        );
-        // Control: el resto de los permisos de compras del vendedor común
-        // sigue intacto, no se rompió nada más al sacar este.
-        $this->assertTrue(
-            $rolUsuario->permisos()->whereIn('permisos.codigo', ['create-compras', 'update-compras'])->count() === 2
-        );
+        return Rol::where('codigo', $codigoRol)->firstOrFail()->permisos->pluck('codigo');
     }
 
-    public function test_rol_gerente_mantiene_devolver_compras(): void
+    public function test_rol_usuario_tiene_exactamente_los_permisos_basicos(): void
     {
-        (new RolSeeder())->run();
+        $codigos = $this->permisosDelRol('usuario')->sort()->values();
 
-        $rolGerente = Rol::where('codigo', 'gerente')->firstOrFail();
-        $idDevolverCompras = Permiso::where('codigo', 'devolver-compras')->value('id');
+        $esperados = [
+            'view-dashboard',
+            'list-ventas', 'view-ventas', 'create-ventas',
+            'list-caja', 'create-caja', 'update-caja',
+            'list-categorias', 'view-categorias',
+            'list-clientes', 'view-clientes', 'create-clientes', 'update-clientes',
+            'list-productos', 'view-productos',
+            'view-etiquetas', 'print-etiquetas',
+        ];
+        sort($esperados);
 
-        $this->assertTrue(
-            $rolGerente->permisos()->where('permisos.id', $idDevolverCompras)->exists()
-        );
+        $this->assertEquals($esperados, $codigos->all());
+    }
+
+    public function test_rol_usuario_no_tiene_compras_movimientos_proveedores_ni_configuracion(): void
+    {
+        $codigos = $this->permisosDelRol('usuario');
+
+        foreach (['compras', 'movimientos', 'proveedores', 'usuarios', 'configuracion', 'roles', 'permisos', 'sucursales'] as $grupo) {
+            $idsDelGrupo = Permiso::where('grupo', $grupo)->pluck('codigo');
+            $this->assertEmpty(
+                $codigos->intersect($idsDelGrupo)->all(),
+                "El rol usuario no debería tener ningún permiso del grupo '{$grupo}'"
+            );
+        }
+    }
+
+    public function test_rol_usuario_no_puede_aplicar_descuentos_ni_ver_montos_o_historial_de_caja(): void
+    {
+        $codigos = $this->permisosDelRol('usuario');
+
+        foreach (['aplicar-descuento-ventas', 'ver-montos-caja', 'list-historial-caja', 'view-dashboard-completo'] as $codigo) {
+            $this->assertNotContains($codigo, $codigos, "El rol usuario no debería tener '{$codigo}'");
+        }
+    }
+
+    public function test_rol_gerente_mantiene_devolver_compras_y_dashboard_completo(): void
+    {
+        $codigos = $this->permisosDelRol('gerente');
+
+        $this->assertContains('devolver-compras', $codigos);
+        $this->assertContains('view-dashboard-completo', $codigos);
     }
 }

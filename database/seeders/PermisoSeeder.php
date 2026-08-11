@@ -12,6 +12,11 @@ class PermisoSeeder extends Seeder
         $permisos = [
             // Dashboard
             ['codigo' => 'view-dashboard', 'nombre' => 'Ver dashboard', 'grupo' => 'dashboard'],
+            // Sin esto, el Dashboard solo muestra la pestaña "Resumen" — las
+            // demás (Ventas, Compras, Productos, Métodos de pago, Historial de
+            // Caja) exponen el mismo nivel de detalle que las secciones enteras
+            // de Compras/Caja, que un cajero básico puede no tener acceso a ver.
+            ['codigo' => 'view-dashboard-completo', 'nombre' => 'Ver todas las pestañas del dashboard (no solo Resumen)', 'grupo' => 'dashboard'],
 
             // General — controles compartidos por varias pantallas
             ['codigo' => 'ver-filtros-fechas', 'nombre' => 'Cambiar filtros de fecha (por defecto: solo el día de hoy)', 'grupo' => 'general'],
