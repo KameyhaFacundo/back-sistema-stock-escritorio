@@ -20,6 +20,7 @@ class User extends Authenticatable implements JWTSubject
         'email',
         'email_pendiente',
         'password',
+        'pin',
         'google_id',
         'id_tipo_usuario',
         'id_rol',
@@ -33,6 +34,7 @@ class User extends Authenticatable implements JWTSubject
     // ningún JSON, igual que la propia contraseña.
     protected $hidden = [
         'password',
+        'pin',
         'two_factor_secret',
         'email_token',
         'email_token_created_at',
@@ -42,6 +44,7 @@ class User extends Authenticatable implements JWTSubject
         'is_super_admin'     => 'boolean',
         'email_verified_at'  => 'datetime',
         'password'           => 'hashed',
+        'pin'                => 'hashed',
         'two_factor_enabled' => 'boolean',
     ];
 

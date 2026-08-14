@@ -34,10 +34,16 @@ trait ValidaPreciosLinea
      * venta, que ya requiere aplicar-descuento-ventas: vender una línea por
      * arriba o por debajo del precio de lista es, funcionalmente, un
      * descuento/recargo manual.
+     *
+     * $tienePermisoEfectivo lo calcula el caller (VentasController::store())
+     * combinando el permiso real del usuario CON un token de autorización
+     * válido (ver autorizarDescuento) — no se rechequea acá el permiso
+     * directo para no duplicar esa lógica en dos lugares.
      */
-    protected function precioLineasSinPermiso(array $lineas, int $empresaId, ?Collection $preciosCache = null): ?JsonResponse
+    protected function precioLineasSinPermiso(array $lineas, int $empresaId, ?Collection $preciosCache = null, ?bool $tienePermisoEfectivo = null): ?JsonResponse
     {
-        if (auth()->user()->chequearPermisos('aplicar-descuento-ventas')) {
+        $tienePermiso = $tienePermisoEfectivo ?? auth()->user()->chequearPermisos('aplicar-descuento-ventas');
+        if ($tienePermiso) {
             return null;
         }
 

@@ -324,4 +324,37 @@ class UsersController extends Controller
             'message' => 'Contraseña actualizada correctamente',
         ]);
     }
+
+    /**
+     * PIN corto para autorizar descuentos desde el POS (ver VentasController::
+     * autorizarDescuento) sin tipear la contraseña completa en la pantalla del
+     * cajero. Confirmar con la contraseña de login antes de cambiarlo — mismo
+     * criterio que cambiarPassword(), evita que alguien con la sesión abierta
+     * y desatendida se ponga un PIN propio sin saber la contraseña real.
+     */
+    public function cambiarPin(Request $request): JsonResponse
+    {
+        $request->validate([
+            'password' => 'required|string',
+            'pin' => 'required|string|min:4|max:6|regex:/^[0-9]+$/',
+        ]);
+
+        $user = auth()->user();
+
+        if (!Hash::check($request->password, $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'La contraseña es incorrecta',
+            ], 400);
+        }
+
+        $user->update([
+            'pin' => Hash::make($request->pin),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'PIN configurado correctamente',
+        ]);
+    }
 }

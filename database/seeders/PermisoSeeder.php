@@ -57,6 +57,7 @@ class PermisoSeeder extends Seeder
             ['codigo' => 'create-productos', 'nombre' => 'Crear producto', 'grupo' => 'productos'],
             ['codigo' => 'update-productos', 'nombre' => 'Actualizar producto', 'grupo' => 'productos'],
             ['codigo' => 'delete-productos', 'nombre' => 'Eliminar producto', 'grupo' => 'productos'],
+            ['codigo' => 'export-productos', 'nombre' => 'Exportar productos', 'grupo' => 'productos'],
 
             // Proveedores
             ['codigo' => 'list-proveedores', 'nombre' => 'Listar proveedores', 'grupo' => 'proveedores'],
@@ -71,6 +72,8 @@ class PermisoSeeder extends Seeder
             ['codigo' => 'create-clientes', 'nombre' => 'Crear cliente', 'grupo' => 'clientes'],
             ['codigo' => 'update-clientes', 'nombre' => 'Actualizar cliente', 'grupo' => 'clientes'],
             ['codigo' => 'delete-clientes', 'nombre' => 'Eliminar cliente', 'grupo' => 'clientes'],
+            ['codigo' => 'import-clientes', 'nombre' => 'Importar clientes', 'grupo' => 'clientes'],
+            ['codigo' => 'export-clientes', 'nombre' => 'Exportar clientes', 'grupo' => 'clientes'],
 
             // Compras
             ['codigo' => 'list-compras', 'nombre' => 'Listar compras', 'grupo' => 'compras'],

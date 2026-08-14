@@ -74,9 +74,10 @@ class RolSeeder extends Seeder
             // useHasPermiso.jsx, que gatea todo eso del lado del front).
             'list-productos',
             'view-productos',
-            // Etiquetas de precio
-            'view-etiquetas',
-            'print-etiquetas',
+            // Etiquetas de precio: sacado a pedido explícito — este rol ya no
+            // ve la sección en el sidebar ni puede imprimir etiquetas (ver
+            // migración 2026_08_14_000001_saca_view_etiquetas_del_rol_usuario
+            // para instalaciones existentes).
             // Compras, Movimientos, Proveedores, Usuarios y Configuración quedan
             // completamente afuera — no hay ningún codigo de esos grupos acá.
         ])->pluck('id');

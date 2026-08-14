@@ -117,6 +117,7 @@ $apiRoutes = function () {
                 Route::delete('{id}',        [UsersController::class, 'destroy']) ->middleware('permisos.verify:delete-usuarios');
                 Route::put('{id}/restore',   [UsersController::class, 'restore']) ->middleware('permisos.verify:restore-usuarios');
                 Route::post('cambiar-password', [UsersController::class, 'cambiarPassword']);
+                Route::post('cambiar-pin', [UsersController::class, 'cambiarPin']);
             });
 
             Route::prefix('roles')->group(function () {
@@ -323,6 +324,11 @@ $apiRoutes = function () {
                 Route::get('/',                  [VentasController::class, 'index'])         ->middleware('permisos.verify:list-ventas');
                 Route::get('{id}',               [VentasController::class, 'show'])          ->middleware('permisos.verify:view-ventas');
                 Route::post('/',                 [VentasController::class, 'store'])         ->middleware('permisos.verify:create-ventas');
+                // "Override de gerente" para descuentos — confirma la contraseña de OTRO
+                // usuario de la empresa, no hace login como esa persona (ver el método).
+                // Throttle propio y más estricto que el del grupo padre: es un endpoint
+                // que compara contraseñas, no puede quedar abierto a fuerza bruta.
+                Route::post('autorizar-descuento', [VentasController::class, 'autorizarDescuento']) ->middleware(['permisos.verify:create-ventas', 'throttle:5,1']);
                 Route::put('{id}',               [VentasController::class, 'update'])        ->middleware('permisos.verify:update-ventas');
                 // Sin DELETE a propósito: borrar una venta directo dejaba el stock y la
                 // caja que ya había afectado sin revertir (a diferencia de /anular, que sí

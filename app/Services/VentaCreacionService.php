@@ -191,6 +191,7 @@ class VentaCreacionService
             'monto_total'   => $montoTotal,
             'cuit'          => $cliente?->cuit,
             'motivo_descuento' => $datos['motivo_descuento'] ?? null,
+            'descuento_autorizado_por' => $datos['descuento_autorizado_por'] ?? null,
         ]);
 
         // Se guarda el desglose real de "varios métodos" — sin esto, anular()/

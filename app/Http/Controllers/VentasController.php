@@ -13,13 +13,16 @@ use App\Models\Producto;
 use App\Models\Cliente;
 use App\Models\MovimientoCaja;
 use App\Models\Turno;
+use App\Models\User;
 use App\Services\DevolucionVentaService;
 use App\Services\StockService;
 use App\Services\TurnoService;
 use App\Services\VentaCreacionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class VentasController extends Controller
 {
@@ -89,9 +92,22 @@ class VentasController extends Controller
             ], 422);
         }
 
+        // El cajero puede no tener aplicar-descuento-ventas y aun así aplicar
+        // un descuento SI alguien que sí lo tiene autorizó con su contraseña
+        // (ver autorizarDescuento() más abajo) — $tieneDescuentoPermiso es el
+        // permiso "efectivo" para esta venta puntual, propio o prestado.
+        $tieneDescuentoPermiso = auth()->user()->chequearPermisos('aplicar-descuento-ventas');
+        $autorizadoPor = null;
+        if (!$tieneDescuentoPermiso && $request->filled('autorizacion_descuento')) {
+            $autorizadoPor = $this->validarTokenAutorizacionDescuento($request->autorizacion_descuento);
+            if ($autorizadoPor) {
+                $tieneDescuentoPermiso = true;
+            }
+        }
+
         $ajuste = $request->ajuste;
         $esDescuento = !empty($ajuste) && ($ajuste['tipo'] ?? 'descuento') === 'descuento' && (float) ($ajuste['valor'] ?? 0) > 0;
-        if ($esDescuento && !auth()->user()->chequearPermisos('aplicar-descuento-ventas')) {
+        if ($esDescuento && !$tieneDescuentoPermiso) {
             return response()->json([
                 'success' => false,
                 'message' => 'No tenés permiso para aplicar descuentos',
@@ -102,7 +118,7 @@ class VentasController extends Controller
         // abajo (antes cada una hacía la misma query por su cuenta, en CADA venta).
         $preciosCache = $this->preciosDeLineas($request->lineas, auth()->user()->empresa_id);
 
-        if ($resp = $this->precioLineasSinPermiso($request->lineas, auth()->user()->empresa_id, $preciosCache)) {
+        if ($resp = $this->precioLineasSinPermiso($request->lineas, auth()->user()->empresa_id, $preciosCache, $tieneDescuentoPermiso)) {
             return $resp;
         }
 
@@ -134,6 +150,7 @@ class VentasController extends Controller
                 'ajuste'        => $request->ajuste,
                 'puntos_canjeados' => $request->puntos_canjeados,
                 'motivo_descuento' => $request->motivo_descuento,
+                'descuento_autorizado_por' => $autorizadoPor,
             ], auth()->user()->empresa_id, $turnoActivo->id);
 
             // Viene del botón "Convertir en venta" de Presupuestos.jsx, que manda
@@ -169,6 +186,74 @@ class VentasController extends Controller
             DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Error al crear la venta', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * "Override de gerente" — un cajero sin aplicar-descuento-ventas pide
+     * este endpoint con el PIN corto de CUALQUIER usuario de su misma
+     * empresa que sí tenga el permiso (no queda logueado como esa persona,
+     * solo se confirma el PIN — ver UsersController::cambiarPin, se
+     * configura aparte de la contraseña de login a propósito, para no tener
+     * que tipear la clave completa en la pantalla del cajero). Si matchea,
+     * devuelve un token firmado y con vencimiento corto que store() acepta
+     * como equivalente al permiso propio para ESA venta puntual (ver
+     * validarTokenAutorizacionDescuento abajo). No se revela nunca contra
+     * qué usuario matcheó ni cuántos hay — la respuesta de error es siempre
+     * la misma.
+     */
+    public function autorizarDescuento(Request $request): JsonResponse
+    {
+        $request->validate(['pin' => 'required|string']);
+
+        $candidatos = User::where('empresa_id', auth()->user()->empresa_id)
+            ->where('nro_usu', '!=', auth()->user()->nro_usu)
+            ->whereNotNull('pin')
+            ->get()
+            ->filter(fn ($u) => $u->chequearPermisos('aplicar-descuento-ventas'));
+
+        $autorizante = $candidatos->first(fn ($u) => Hash::check($request->pin, $u->pin));
+
+        if (!$autorizante) {
+            return response()->json([
+                'success' => false,
+                'message' => 'PIN incorrecto o sin permiso para autorizar descuentos',
+            ], 422);
+        }
+
+        $payload = [
+            'cajero'   => auth()->user()->nro_usu,
+            'empresa'  => auth()->user()->empresa_id,
+            'nombre'   => $autorizante->des_usu,
+            'exp'      => now()->addMinutes(10)->timestamp,
+        ];
+
+        return response()->json([
+            'success'       => true,
+            'token'         => Crypt::encryptString(json_encode($payload)),
+            'autorizado_por' => $autorizante->des_usu,
+        ]);
+    }
+
+    /**
+     * Devuelve el nombre de quien autorizó si el token es válido (sin vencer,
+     * de la misma empresa y del mismo cajero que lo va a usar), o null si no
+     * — nunca tira excepción: un token vencido/mal formado se trata igual
+     * que "no mandaron ninguno", cae al 403 normal de siempre.
+     */
+    private function validarTokenAutorizacionDescuento(string $token): ?string
+    {
+        try {
+            $payload = json_decode(Crypt::decryptString($token), true);
+        } catch (\Exception $e) {
+            return null;
+        }
+
+        if (!is_array($payload)) return null;
+        if (($payload['exp'] ?? 0) < now()->timestamp) return null;
+        if (($payload['cajero'] ?? null) !== auth()->user()->nro_usu) return null;
+        if (($payload['empresa'] ?? null) !== auth()->user()->empresa_id) return null;
+
+        return $payload['nombre'] ?? null;
     }
 
     public function update(UpdateVentaRequest $request, $id): JsonResponse

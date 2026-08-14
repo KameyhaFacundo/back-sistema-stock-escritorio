@@ -36,6 +36,10 @@ class CreateVentaRequest extends FormRequest
             'ajuste.valor'         => 'nullable|numeric|min:0',
             'puntos_canjeados'     => 'nullable|integer|min:0',
             'motivo_descuento'     => 'nullable|string|max:255',
+            // Token de un solo uso emitido por VentasController::autorizarDescuento
+            // — permite aplicar un descuento sin tener el permiso propio, si
+            // alguien que sí lo tiene puso su contraseña (ver ese método).
+            'autorizacion_descuento' => 'nullable|string',
             // Desglose real cuando se cobra con "varios métodos de pago" en el
             // POS (ver variosPagos en Home.jsx) — metodo_pago de arriba solo
             // guarda el PRIMERO, así que sin esto la parte en efectivo de una
