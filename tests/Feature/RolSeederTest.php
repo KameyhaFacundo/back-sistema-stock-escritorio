@@ -10,10 +10,11 @@ use Tests\TestCase;
 
 /**
  * Rol básico "Usuario" (cajero): vende en el POS, consulta clientes y
- * productos, opera su caja e imprime etiquetas — sin Compras, Movimientos,
- * Proveedores, Usuarios, Configuración NI Reportes/Dashboard (ni siquiera
- * "Resumen"), sin montos/historial de caja, y sin poder tocar precios ni
- * aplicar descuentos (reservado para gerente/admin).
+ * productos, y opera su caja — sin Compras, Movimientos, Proveedores,
+ * Usuarios, Configuración NI Reportes/Dashboard (ni siquiera "Resumen"),
+ * sin montos/historial de caja, sin poder tocar precios ni aplicar
+ * descuentos (reservado para gerente/admin), y sin ver Etiquetas (ver
+ * migración saca_view_etiquetas_del_rol_usuario).
  */
 class RolSeederTest extends TestCase
 {
@@ -36,7 +37,6 @@ class RolSeederTest extends TestCase
             'list-categorias', 'view-categorias',
             'list-clientes', 'view-clientes', 'create-clientes', 'update-clientes',
             'list-productos', 'view-productos',
-            'view-etiquetas', 'print-etiquetas',
         ];
         sort($esperados);
 
