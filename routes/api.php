@@ -55,6 +55,16 @@ $apiRoutes = function () {
         // hay salida a internet o si el servidor responde).
         Route::get('health', fn () => response()->json(['ok' => true]));
 
+        // Setup inicial — corre UNA sola vez, ANTES del primer login (ver
+        // UsersController::estadoConfiguracionInicial/configurarUsuarioInicial).
+        // No pide JWT a propósito: en el primer ingreso el dueño del local arma
+        // su propia cuenta sin pasar por la cuenta de respaldo. Se auto-bloquea
+        // apenas se completa (ya no existe ningún usuario con
+        // configuracion_inicial_completada = false), así que no queda un
+        // endpoint de creación de admins abierto después del alta inicial.
+        Route::get('setup/estado', [UsersController::class, 'estadoConfiguracionInicial']);
+        Route::post('setup/configuracion-inicial', [UsersController::class, 'configurarUsuarioInicial']);
+
         Route::post('login', [AuthController::class, 'login'])
             ->middleware(config('rate_limiting.api.login'));
         Route::post('login/2fa', [AuthController::class, 'loginVerificar2fa'])
@@ -113,7 +123,6 @@ $apiRoutes = function () {
                 // Antes de la ruta con wildcard {id} de abajo — si no, "mi-perfil"
                 // matchearía ahí como si fuera un id y llamaría a update() en su lugar.
                 Route::put('mi-perfil',       [UsersController::class, 'actualizarPerfil']);
-                Route::post('configuracion-inicial', [UsersController::class, 'configurarUsuarioInicial']);
                 Route::put('{id}',           [UsersController::class, 'update'])  ->middleware('permisos.verify:update-usuarios');
                 Route::delete('{id}',        [UsersController::class, 'destroy']) ->middleware('permisos.verify:delete-usuarios');
                 Route::put('{id}/restore',   [UsersController::class, 'restore']) ->middleware('permisos.verify:restore-usuarios');

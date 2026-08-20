@@ -330,11 +330,25 @@ class UsersController extends Controller
         ]);
     }
 
+    // Público (se llama ANTES del primer login, ver routes/api.php) — devuelve
+    // si queda una instalación sin configurar. No usa auth(): si ya no hay
+    // ningún usuario con configuracion_inicial_completada = false, es que el
+    // setup ya se hizo y el front muestra el login normal.
+    public function estadoConfiguracionInicial(): JsonResponse
+    {
+        $pendiente = User::where('configuracion_inicial_completada', false)->exists();
+        return response()->json(['necesita_configuracion' => $pendiente]);
+    }
+
     public function configurarUsuarioInicial(Request $request): JsonResponse
     {
-        $usuarioInicial = auth()->user();
+        // Sin JWT acá (primer ingreso): el usuario admin inicial sembrado es el
+        // que arrastra el id_empresa/id_sucursal/rol del alta de la instalación
+        // (ver UsuarioSeeder). Mismo criterio que antes, pero buscado por el
+        // flag en vez de por auth().
+        $usuarioInicial = User::where('configuracion_inicial_completada', false)->first();
 
-        if ($usuarioInicial->configuracion_inicial_completada) {
+        if (!$usuarioInicial) {
             return response()->json(['success' => false, 'message' => 'La configuración inicial ya fue completada.'], 422);
         }
 
