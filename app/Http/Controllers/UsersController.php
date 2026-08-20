@@ -6,6 +6,7 @@ use App\Http\Requests\CreateUserRequest;
 use App\Http\Requests\UpdateUserRequest;
 use App\Jobs\SendEmailChangeVerificationJob;
 use App\Jobs\SendEmailVerificationJob;
+use App\Models\Rol;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,13 +14,17 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class UsersController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
         $query = User::with(['rol', 'tipoUsuario', 'sucursal:id,nombre'])
-            ->where('empresa_id', auth()->user()->empresa_id);
+            ->where('empresa_id', auth()->user()->empresa_id)
+            // La cuenta inicial queda como acceso de respaldo, pero no se
+            // muestra en la gestión normal de usuarios del negocio.
+            ->where('email', '!=', 'admin@gmail.com');
 
         if ($request->has('search') && $request->search) {
             $search = $request->search;
@@ -323,6 +328,64 @@ class UsersController extends Controller
             'success' => true,
             'message' => 'Contraseña actualizada correctamente',
         ]);
+    }
+
+    public function configurarUsuarioInicial(Request $request): JsonResponse
+    {
+        $usuarioInicial = auth()->user();
+
+        if ($usuarioInicial->configuracion_inicial_completada) {
+            return response()->json(['success' => false, 'message' => 'La configuración inicial ya fue completada.'], 422);
+        }
+
+        $validated = $request->validate([
+            'des_usu'        => 'required|string|max:255',
+            'email'          => ['required', 'email', Rule::unique('users', 'email')],
+            'password'       => 'required|string|min:6|confirmed',
+            'nombre_negocio' => 'required|string|max:255',
+        ]);
+
+        $empresa = $usuarioInicial->empresa;
+        if (!$empresa) {
+            return response()->json(['success' => false, 'message' => 'No tenés una empresa asociada.'], 400);
+        }
+
+        $rolAdmin = Rol::where('codigo', 'admin')->first();
+        if (!$rolAdmin) {
+            return response()->json(['success' => false, 'message' => 'No se encontró el rol Administrador.'], 500);
+        }
+
+        $nuevoUsuario = User::create([
+            'des_usu'  => $validated['des_usu'],
+            'email'    => $validated['email'],
+            'password' => Hash::make($validated['password']),
+            'id_tipo_usuario' => $usuarioInicial->id_tipo_usuario,
+            'id_rol' => $rolAdmin->id,
+            'empresa_id' => $usuarioInicial->empresa_id,
+            'id_sucursal' => $usuarioInicial->id_sucursal,
+            'configuracion_inicial_completada' => true,
+        ]);
+
+        if ($rolAdmin) {
+            $nuevoUsuario->permisos()->sync($rolAdmin->permisos->pluck('id'));
+        }
+
+        $usuarioInicial->configuracion_inicial_completada = true;
+        $usuarioInicial->save();
+        $empresa->update(['nombre' => $validated['nombre_negocio']]);
+
+        $nuevoUsuario->load(['rol.permisos', 'tipoUsuario', 'permisos', 'empresa', 'sucursal']);
+        $token = JWTAuth::fromUser($nuevoUsuario);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Usuario propio creado correctamente',
+            'access_token' => $token,
+            'token_type' => 'bearer',
+            'expires_in' => config('jwt.ttl') * 60,
+            'user' => $nuevoUsuario,
+            'permisos' => $nuevoUsuario->obtenerTodosLosPermisos(),
+        ], 201);
     }
 
     /**

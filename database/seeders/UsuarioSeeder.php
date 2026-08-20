@@ -47,6 +47,7 @@ class UsuarioSeeder extends Seeder
                 'id_rol'          => $rolAdmin?->id,
                 'empresa_id'      => $empresa->id,
                 'id_sucursal'     => $sucursal->id,
+                'configuracion_inicial_completada' => false,
             ]
         );
 

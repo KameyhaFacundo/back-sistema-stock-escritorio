@@ -113,6 +113,7 @@ $apiRoutes = function () {
                 // Antes de la ruta con wildcard {id} de abajo — si no, "mi-perfil"
                 // matchearía ahí como si fuera un id y llamaría a update() en su lugar.
                 Route::put('mi-perfil',       [UsersController::class, 'actualizarPerfil']);
+                Route::post('configuracion-inicial', [UsersController::class, 'configurarUsuarioInicial']);
                 Route::put('{id}',           [UsersController::class, 'update'])  ->middleware('permisos.verify:update-usuarios');
                 Route::delete('{id}',        [UsersController::class, 'destroy']) ->middleware('permisos.verify:delete-usuarios');
                 Route::put('{id}/restore',   [UsersController::class, 'restore']) ->middleware('permisos.verify:restore-usuarios');

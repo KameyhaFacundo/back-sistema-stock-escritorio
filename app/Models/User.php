@@ -25,6 +25,7 @@ class User extends Authenticatable implements JWTSubject
         'id_tipo_usuario',
         'id_rol',
         'is_super_admin',
+        'configuracion_inicial_completada',
         'empresa_id',
         'id_sucursal',
     ];
@@ -42,6 +43,7 @@ class User extends Authenticatable implements JWTSubject
 
     protected $casts = [
         'is_super_admin'     => 'boolean',
+        'configuracion_inicial_completada' => 'boolean',
         'email_verified_at'  => 'datetime',
         'password'           => 'hashed',
         'pin'                => 'hashed',
